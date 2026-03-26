@@ -18,13 +18,11 @@ targets:
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_ENTITLEMENTS: Hyv/Hyv.entitlements
         INFOPLIST_KEY_LSUIElement: true
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: "Hyv needs screen capture access to record meeting audio."
     dependencies:
-      - framework: ScreenCaptureKit.framework
-        implicit: true
-      - framework: AVFoundation.framework
-        implicit: true
-      - framework: CoreMedia.framework
-        implicit: true
+      - sdk: ScreenCaptureKit.framework
+      - sdk: AVFoundation.framework
+      - sdk: CoreMedia.framework

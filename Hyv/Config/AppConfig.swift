@@ -1,3 +1,111 @@
 import Foundation
 
-// TODO: Implement in Phase 2
+struct AppConfig {
+    let cohereApiKey: String
+    let huggingFaceToken: String
+    let pythonPath: String
+    let scriptDirectory: String
+
+    static let shared: AppConfig = {
+        // Try environment variables first
+        let envCohere = ProcessInfo.processInfo.environment["COHERE_TRIAL_API_KEY"] ?? ""
+        let envHF = ProcessInfo.processInfo.environment["HF_TOKEN"] ?? ""
+
+        if !envCohere.isEmpty && !envHF.isEmpty {
+            return AppConfig(
+                cohereApiKey: envCohere,
+                huggingFaceToken: envHF,
+                pythonPath: detectPythonPath(),
+                scriptDirectory: detectScriptDirectory()
+            )
+        }
+
+        // Try .env file
+        let searchPaths = [
+            Bundle.main.bundlePath + "/../.env",
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".hyv/.env").path,
+            FileManager.default.currentDirectoryPath + "/.env"
+        ]
+
+        for path in searchPaths {
+            let env = loadEnvFile(path: path)
+            let cohere = !envCohere.isEmpty ? envCohere : (env["COHERE_TRIAL_API_KEY"] ?? "")
+            let hf = !envHF.isEmpty ? envHF : (env["HF_TOKEN"] ?? "")
+
+            if !cohere.isEmpty || !hf.isEmpty {
+                return AppConfig(
+                    cohereApiKey: cohere,
+                    huggingFaceToken: hf,
+                    pythonPath: detectPythonPath(),
+                    scriptDirectory: detectScriptDirectory()
+                )
+            }
+        }
+
+        return AppConfig(
+            cohereApiKey: "",
+            huggingFaceToken: "",
+            pythonPath: detectPythonPath(),
+            scriptDirectory: detectScriptDirectory()
+        )
+    }()
+
+    private static func loadEnvFile(path: String) -> [String: String] {
+        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else { return [:] }
+
+        var env: [String: String] = [:]
+        for line in contents.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("#") else { continue }
+            if let equalsIndex = trimmed.firstIndex(of: "=") {
+                let key = String(trimmed[trimmed.startIndex..<equalsIndex])
+                let value = String(trimmed[trimmed.index(after: equalsIndex)...])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                env[key] = value
+            }
+        }
+        return env
+    }
+
+    private static func detectPythonPath() -> String {
+        let candidates = [
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3"
+        ]
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return path
+            }
+        }
+        return "python3"
+    }
+
+    private static func detectScriptDirectory() -> String {
+        // Check relative to the app bundle
+        let bundleScripts = Bundle.main.bundlePath + "/../../scripts"
+        if FileManager.default.fileExists(atPath: bundleScripts + "/diarize_and_transcribe.py") {
+            return bundleScripts
+        }
+
+        // Check current working directory
+        let cwdScripts = FileManager.default.currentDirectoryPath + "/scripts"
+        if FileManager.default.fileExists(atPath: cwdScripts + "/diarize_and_transcribe.py") {
+            return cwdScripts
+        }
+
+        return cwdScripts
+    }
+
+    var hasValidApiKey: Bool {
+        !cohereApiKey.isEmpty
+    }
+
+    var hasValidHFToken: Bool {
+        !huggingFaceToken.isEmpty
+    }
+
+    var diarizeScriptPath: String {
+        scriptDirectory + "/diarize_and_transcribe.py"
+    }
+}
