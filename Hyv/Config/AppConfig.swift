@@ -68,7 +68,12 @@ struct AppConfig {
     }
 
     private static func detectPythonPath() -> String {
+        // Prefer project venv first
+        let projectRoot = detectProjectRoot()
+        let venvPython = projectRoot + "/venv/bin/python3"
+
         let candidates = [
+            venvPython,
             "/opt/homebrew/bin/python3",
             "/usr/local/bin/python3",
             "/usr/bin/python3"
@@ -81,20 +86,20 @@ struct AppConfig {
         return "python3"
     }
 
+    private static func detectProjectRoot() -> String {
+        // Walk up from the bundle to find the repo root (contains scripts/)
+        var dir = Bundle.main.bundlePath
+        for _ in 0..<6 {
+            dir = (dir as NSString).deletingLastPathComponent
+            if FileManager.default.fileExists(atPath: dir + "/scripts/diarize_and_transcribe.py") {
+                return dir
+            }
+        }
+        return FileManager.default.currentDirectoryPath
+    }
+
     private static func detectScriptDirectory() -> String {
-        // Check relative to the app bundle
-        let bundleScripts = Bundle.main.bundlePath + "/../../scripts"
-        if FileManager.default.fileExists(atPath: bundleScripts + "/diarize_and_transcribe.py") {
-            return bundleScripts
-        }
-
-        // Check current working directory
-        let cwdScripts = FileManager.default.currentDirectoryPath + "/scripts"
-        if FileManager.default.fileExists(atPath: cwdScripts + "/diarize_and_transcribe.py") {
-            return cwdScripts
-        }
-
-        return cwdScripts
+        return detectProjectRoot() + "/scripts"
     }
 
     var hasValidApiKey: Bool {

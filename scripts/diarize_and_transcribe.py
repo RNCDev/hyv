@@ -87,7 +87,7 @@ def main():
     progress(0, 0, "Loading diarization model...")
     pipeline = Pipeline.from_pretrained(
         "pyannote/speaker-diarization-3.1",
-        use_auth_token=args.hf_token
+        token=args.hf_token
     )
 
     progress(0, 0, "Running speaker diarization...")
@@ -97,9 +97,10 @@ def main():
         max_speakers=args.max_speakers
     )
 
-    # Collect segments
+    # Collect segments (pyannote 4.x returns DiarizeOutput dataclass)
+    annotation = getattr(diarization, 'speaker_diarization', diarization)
     raw_segments = []
-    for segment, _, speaker in diarization.itertracks(yield_label=True):
+    for segment, _, speaker in annotation.itertracks(yield_label=True):
         # Skip very short segments (< 0.3s)
         if segment.end - segment.start < 0.3:
             continue
