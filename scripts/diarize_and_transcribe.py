@@ -110,6 +110,15 @@ def main():
             "speaker": speaker
         })
 
+    # Merge adjacent segments from the same speaker
+    merged_segments = []
+    for seg in raw_segments:
+        if merged_segments and merged_segments[-1]["speaker"] == seg["speaker"] and seg["start"] - merged_segments[-1]["end"] < 1.5:
+            merged_segments[-1]["end"] = seg["end"]
+        else:
+            merged_segments.append(dict(seg))
+    raw_segments = merged_segments
+
     total = len(raw_segments)
     speakers = sorted(set(s["speaker"] for s in raw_segments))
     progress(0, total, f"Diarization complete. Found {len(speakers)} speakers, {total} segments.")

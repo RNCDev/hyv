@@ -5,6 +5,7 @@ enum MeetingApp: String, CaseIterable {
     case facetime = "com.apple.FaceTime"
     case webex = "com.webex.meetingmanager"
     case slack = "com.tinyspeck.slackmacgap"
+    case whatsapp = "net.whatsapp.WhatsApp"
 
     var displayName: String {
         switch self {
@@ -13,6 +14,7 @@ enum MeetingApp: String, CaseIterable {
         case .facetime: return "FaceTime"
         case .webex: return "Webex"
         case .slack: return "Slack"
+        case .whatsapp: return "WhatsApp"
         }
     }
 }

@@ -2,7 +2,14 @@
 
 ## Prerequisites
 
-### 1. Python Virtual Environment
+### 1. Quick Setup (recommended)
+```bash
+cd /Users/ritujoychowdhury/Documents/Github/hyv
+./scripts/setup.sh
+```
+This checks Python, installs dependencies, creates `.env` if needed, and generates the Xcode project.
+
+### 1b. Manual Python Virtual Environment
 ```bash
 cd /Users/ritujoychowdhury/Documents/Github/hyv
 python3 -m venv venv
@@ -117,7 +124,7 @@ open Hyv.xcodeproj
 7. When done, check your Desktop for `Hyv_Transcript_*.txt`
 
 ### Test with a real meeting
-1. Open Zoom, Teams, FaceTime, or any supported meeting app
+1. Open Zoom, Teams, FaceTime, WhatsApp, or any supported meeting app
 2. The menu bar icon should change and show "Meeting detected: Zoom"
 3. Start a meeting and click **Start Recording**
 4. Have a conversation

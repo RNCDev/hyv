@@ -211,12 +211,35 @@ final class AppState: ObservableObject {
                 }
 
                 self.fileWriter.close()
+
+                // Clean up WAV file after successful transcription
+                try? FileManager.default.removeItem(at: audioURL)
+
                 self.status = self.meetingDetector.isMeetingActive ? .meetingDetected : .idle
                 self.recordingStartTime = nil
 
             } catch {
-                self.fileWriter.close()
-                self.status = .error("Processing failed: \(error.localizedDescription)")
+                // Fallback: transcribe without speaker labels if diarization fails
+                self.status = .processing("Diarization failed, transcribing without speaker labels...")
+                do {
+                    let wavData = try Data(contentsOf: audioURL)
+                    let transcriber = CohereTranscriptionService(apiKey: AppConfig.shared.cohereApiKey)
+                    let text = try await transcriber.transcribe(wavData: wavData)
+
+                    try self.fileWriter.open(meetingApp: self.detectedApp)
+                    self.currentTranscriptPath = self.fileWriter.filePath?.path
+                    self.fileWriter.appendSegment(text, timestamp: 0)
+                    self.transcriptLines.append("[00:00] \(text)")
+                    self.fileWriter.close()
+
+                    // Clean up WAV file after successful fallback
+                    try? FileManager.default.removeItem(at: audioURL)
+
+                    self.status = self.meetingDetector.isMeetingActive ? .meetingDetected : .idle
+                } catch {
+                    self.fileWriter.close()
+                    self.status = .error("Processing failed: \(error.localizedDescription)")
+                }
                 self.recordingStartTime = nil
             }
         }

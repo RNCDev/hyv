@@ -29,7 +29,8 @@ hyv/
 ├── project.yml                       # XcodeGen config
 ├── scripts/
 │   ├── diarize_and_transcribe.py     # pyannote + Cohere API pipeline
-│   └── requirements.txt              # Python dependencies
+│   ├── requirements.txt              # Python dependencies
+│   └── setup.sh                      # One-command setup script
 └── Hyv/
     ├── HyvApp.swift                  # @main, MenuBarExtra entry point
     ├── Hyv.entitlements              # No sandbox for MVP
@@ -54,18 +55,19 @@ hyv/
 
 ## Build & Run
 ```bash
-# 1. Install Python dependencies
+# Quick setup (installs deps, generates project)
+./scripts/setup.sh
+
+# Or manually:
 pip install -r scripts/requirements.txt
+brew install xcodegen && xcodegen generate
 
-# 2. Generate Xcode project
-brew install xcodegen  # if needed
-xcodegen generate
-
-# 3. Type-check (no Xcode needed)
+# Type-check (no Xcode needed)
 swiftc -typecheck -target arm64-apple-macos14.0 -sdk $(xcrun --show-sdk-path) $(find Hyv -name "*.swift")
 
-# 4. Full build requires Xcode.app
-open Hyv.xcodeproj
+# Full build from CLI
+xcodebuild -project Hyv.xcodeproj -scheme Hyv -configuration Debug build SYMROOT=build
+open build/Debug/Hyv.app
 ```
 
 ## Environment
@@ -79,3 +81,6 @@ open Hyv.xcodeproj
 - User will wait 30 min for a 30 min meeting for accurate speaker-labeled results
 - Incremental file writes during *processing* (not during recording)
 - Record → Diarize → Transcribe → Write (full pipeline after meeting ends)
+- Adjacent same-speaker segments are merged for cleaner output
+- Fallback to unlabeled transcription if diarization fails
+- WAV recordings are cleaned up after successful transcription

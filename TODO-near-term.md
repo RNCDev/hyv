@@ -35,8 +35,8 @@ Rewrote the transcription pipeline from real-time chunking to batch post-process
 - [x] Header includes date, meeting app, duration, speaker count
 
 ## Remaining Polish (optional)
-- [ ] Test with real meeting audio end-to-end
-- [ ] Merge adjacent same-speaker segments for cleaner output
-- [ ] Add fallback to unlabeled transcription if diarization fails
-- [ ] Clean up temp WAV files after successful transcription
-- [ ] Add setup script to install Python dependencies automatically
+- [x] Test with real meeting audio end-to-end
+- [x] Merge adjacent same-speaker segments for cleaner output
+- [x] Add fallback to unlabeled transcription if diarization fails
+- [x] Clean up temp WAV files after successful transcription
+- [x] Add setup script to install Python dependencies automatically
