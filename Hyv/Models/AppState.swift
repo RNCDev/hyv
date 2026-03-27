@@ -166,6 +166,13 @@ final class AppState: ObservableObject {
                     }
                 )
 
+                guard !result.segments.isEmpty else {
+                    logger.error("No speech segments found in either channel")
+                    self.status = .error("No speech detected")
+                    self.recordingStartTime = nil
+                    return
+                }
+
                 // Calculate duration from last segment
                 let duration = result.segments.last.map { $0.end } ?? 0
 
@@ -176,7 +183,7 @@ final class AppState: ObservableObject {
                 )
                 self.currentTranscriptPath = self.fileWriter.filePath?.path
 
-                // Write segments incrementally
+                // Write segments
                 for segment in result.segments {
                     self.fileWriter.appendSegment(
                         segment.text,
@@ -189,7 +196,7 @@ final class AppState: ObservableObject {
 
                 self.fileWriter.close()
 
-                // Clean up WAV file after successful transcription
+                // Clean up WAV file
                 do {
                     try FileManager.default.removeItem(at: audioURL)
                     logger.info("WAV file deleted: \(audioURL.lastPathComponent)")
@@ -197,40 +204,14 @@ final class AppState: ObservableObject {
                     logger.error("Failed to delete WAV file: \(error.localizedDescription)")
                 }
 
-                logger.info("Processing complete → idle")
+                logger.info("Processing complete → idle (\(result.segments.count) segments, \(result.speakers.count) speakers)")
                 self.status = .idle
                 self.recordingStartTime = nil
 
             } catch {
-                // Fallback: transcribe without speaker labels if diarization fails
-                logger.error("Diarization failed: \(error.localizedDescription) — falling back to unlabeled transcription")
-                self.status = .processing("Diarization failed, transcribing without speaker labels...")
-                do {
-                    let wavData = try Data(contentsOf: audioURL)
-                    let transcriber = CohereTranscriptionService(apiKey: AppConfig.shared.cohereApiKey)
-                    let text = try await transcriber.transcribe(wavData: wavData)
-
-                    try self.fileWriter.open()
-                    self.currentTranscriptPath = self.fileWriter.filePath?.path
-                    self.fileWriter.appendSegment(text, timestamp: 0)
-                    self.transcriptLines.append("[00:00] \(text)")
-                    self.fileWriter.close()
-
-                    // Clean up WAV file after successful fallback
-                    do {
-                        try FileManager.default.removeItem(at: audioURL)
-                        logger.info("WAV file deleted after fallback: \(audioURL.lastPathComponent)")
-                    } catch {
-                        logger.error("Failed to delete WAV file after fallback: \(error.localizedDescription)")
-                    }
-
-                    logger.info("Fallback transcription complete → idle")
-                    self.status = .idle
-                } catch {
-                    logger.error("Fallback transcription also failed: \(error.localizedDescription)")
-                    self.fileWriter.close()
-                    self.status = .error("Processing failed: \(error.localizedDescription)")
-                }
+                logger.error("Processing failed: \(error.localizedDescription)")
+                self.fileWriter.close()
+                self.status = .error("Processing failed: \(error.localizedDescription)")
                 self.recordingStartTime = nil
             }
         }

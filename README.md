@@ -1,16 +1,17 @@
 # Hyv
 
-A macOS menu bar app that auto-detects multi-party meetings, records system audio, and produces speaker-labeled transcription documents on your Desktop.
+A macOS menu bar app that records both sides of a meeting (system audio + microphone) as separate channels, then produces speaker-labeled transcription documents on your Desktop.
 
 ## How it works
 
-1. **Detects meetings** — polls for running meeting apps (Zoom, Teams, FaceTime, WhatsApp, Webex, Slack)
-2. **Records system audio** — captures via ScreenCaptureKit to a WAV file
-3. **Diarizes speakers** — runs pyannote.audio to identify who spoke when
-4. **Transcribes segments** — sends each speaker segment to the Cohere Transcribe API
-5. **Writes transcript** — outputs a speaker-labeled `.txt` file to your Desktop
+1. **Records dual audio** — captures system audio (remote participants) via ScreenCaptureKit and your microphone via AVCaptureSession into a stereo WAV
+2. **Splits channels** — separates your voice (mic, channel 1) from remote audio (system, channel 0)
+3. **Transcribes your voice** — energy-based VAD on mic channel, segments sent to Cohere API → labeled "Me"
+4. **Diarizes remote speakers** — runs pyannote.audio on system channel to identify who spoke when
+5. **Transcribes remote segments** — each diarized segment sent to Cohere API → labeled "Remote" or "Remote (SPEAKER_XX)"
+6. **Writes transcript** — merges all segments by timestamp into a `.txt` file on your Desktop
 
-Processing happens after the meeting ends. Accuracy over speed — a 30-minute meeting takes roughly 30 minutes to process.
+Processing happens after the recording stops. Accuracy over speed — a 30-minute meeting takes roughly 30 minutes to process.
 
 ## Requirements
 
@@ -56,49 +57,42 @@ open Hyv.xcodeproj
 # Press Cmd+R to build and run
 ```
 
-On first launch, grant **Screen & System Audio Recording** permission in System Settings > Privacy & Security.
+On first launch, grant **Screen & System Audio Recording** and **Microphone** permissions in System Settings > Privacy & Security.
 
 ## Usage
 
 1. The app runs as a menu bar icon (waveform)
-2. Start a meeting in any supported app — Hyv detects it automatically
-3. Click the icon and press **Start Recording**
-4. When the meeting ends, click **Stop Recording**
-5. Wait for processing — a transcript file appears on your Desktop
+2. Click the icon and press **Start Recording** when your meeting begins
+3. When the meeting ends, click **Stop Recording**
+4. Wait for processing — a transcript file appears on your Desktop
 
 ### Output format
 ```
 === Hyv Transcript ===
-Date: March 26, 2026 at 6:04 PM
-Meeting: WhatsApp
+Date: March 27, 2026 at 3:27 PM
 Duration: 30:00
-Speakers: 2
+Speakers: 3
 ========================
 
-[00:03] SPEAKER_01: This is like all the rage, man.
-[00:08] SPEAKER_00: Anyways, go ahead.
+[00:03] Remote (SPEAKER_00): This is like all the rage, man.
+[00:08] Me: Yeah, I agree.
+[00:15] Remote (SPEAKER_01): Anyways, go ahead.
 ...
 
 === End of Transcript ===
 ```
 
-## Supported meeting apps
-
-| App | Bundle ID |
-|-----|-----------|
-| Zoom | `us.zoom.xos` |
-| Microsoft Teams | `com.microsoft.teams2` |
-| Teams (Classic) | `com.microsoft.teams` |
-| FaceTime | `com.apple.FaceTime` |
-| WhatsApp | `net.whatsapp.WhatsApp` |
-| Webex | `com.webex.meetingmanager` |
-| Slack | `com.tinyspeck.slackmacgap` |
-
 ## Architecture
 
 ```
-During meeting:  AudioCaptureService → AudioFileRecorder (WAV to disk)
-After meeting:   Python (pyannote diarization → Cohere API) → TranscriptFileWriter
+During recording:
+  ScreenCaptureKit (system audio) ──→ stereo WAV (ch0=remote, ch1=mic)
+  AVCaptureSession (microphone)   ──→
+
+After recording:
+  ch1 (mic)    → VAD → Cohere API → "Me"
+  ch0 (system) → pyannote → Cohere API → "Remote" / "Remote (SPEAKER_XX)"
+  → merge by timestamp → transcript file
 ```
 
 ## Debugging
@@ -106,10 +100,10 @@ After meeting:   Python (pyannote diarization → Cohere API) → TranscriptFile
 All services log to `os.Logger` (subsystem `com.hyv.app`). Stream logs live:
 
 ```bash
-log stream --predicate 'subsystem == "com.hyv.app"' --level debug
+/usr/bin/log show --predicate 'subsystem == "com.hyv.app"' --last 1h --info
 ```
 
-Or open Console.app and filter by subsystem `com.hyv.app`. Logs cover state transitions, recording lifecycle, diarization subprocess timing, API calls and retries, and all error paths.
+Or open Console.app and filter by subsystem `com.hyv.app`.
 
 See [CLAUDE.md](CLAUDE.md) for detailed project structure and [xcode-build-deploy.md](xcode-build-deploy.md) for the full build & deploy guide.
 

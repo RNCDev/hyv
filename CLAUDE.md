@@ -1,26 +1,37 @@
 # Hyv — macOS Conference Transcription App
 
 ## What is this?
-A macOS menu bar app (like Granola) that auto-detects multi-party meetings, records system audio, and produces speaker-labeled transcription documents on the Desktop.
+A macOS menu bar app that records system audio + microphone as separate channels, then produces speaker-labeled transcription documents on the Desktop.
 
 ## Tech Stack
 - **Language:** Swift 6.2 / SwiftUI + Python 3.10+
 - **Target:** macOS 14.0+, Apple Silicon
-- **Audio capture:** ScreenCaptureKit (system audio, 16kHz mono)
-- **Speaker diarization:** pyannote.audio 3.1 (via Python subprocess)
-- **Transcription:** Cohere Transcribe API (per-segment, after diarization)
+- **Audio capture:** ScreenCaptureKit (system audio) + AVCaptureSession (microphone), 16kHz stereo
+- **Speaker diarization:** pyannote.audio 3.1 on system channel only (remote speakers)
+- **Transcription:** Cohere Transcribe API (per-segment, per-channel)
 - **Build system:** XcodeGen (`project.yml` → `xcodegen generate` → `Hyv.xcodeproj`)
 - **No App Sandbox** — ScreenCaptureKit requires screen recording permission
 
 ## Architecture
 ```
-During meeting:  AudioCaptureService → AudioFileRecorder (full WAV to disk)
-After meeting:   Python script (pyannote diarization → per-segment Cohere API) → TranscriptFileWriter
+During recording:
+  ScreenCaptureKit (system audio) ──→ AudioFileRecorder ──→ stereo WAV
+  AVCaptureSession (microphone)   ──→   (ch0=remote, ch1=mic)
+
+After recording:
+  Python script splits stereo WAV:
+    ch1 (mic)    → energy VAD → transcribe segments → label "Me"
+    ch0 (system) → pyannote diarization → transcribe segments → label "Remote" / "Remote (SPEAKER_XX)"
+  Merge all segments by timestamp → TranscriptFileWriter → Desktop .txt
 ```
 
-1. Record full meeting audio to `~/Library/Application Support/Hyv/recordings/`
-2. On stop, spawn `scripts/diarize_and_transcribe.py` for speaker diarization + transcription
-3. Write speaker-labeled segments incrementally to Desktop `.txt` file during processing
+1. Record stereo WAV to `~/Library/Application Support/Hyv/recordings/`
+2. Channel 0 = system audio (remote participants), Channel 1 = microphone (you)
+3. On stop, spawn `scripts/diarize_and_transcribe.py` which:
+   - Transcribes mic channel directly (energy-based VAD, no diarization needed)
+   - Runs pyannote on system channel to separate multiple remote speakers
+   - Merges all segments by timestamp
+4. Write speaker-labeled transcript to Desktop `.txt` file
 
 ## Project Structure
 ```
@@ -28,7 +39,7 @@ hyv/
 ├── .env                              # COHERE_TRIAL_API_KEY, HF_TOKEN (gitignored)
 ├── project.yml                       # XcodeGen config
 ├── scripts/
-│   ├── diarize_and_transcribe.py     # pyannote + Cohere API pipeline
+│   ├── diarize_and_transcribe.py     # Stereo split + diarize + transcribe pipeline
 │   ├── requirements.txt              # Python dependencies
 │   └── setup.sh                      # One-command setup script
 └── Hyv/
@@ -37,17 +48,17 @@ hyv/
     ├── Config/AppConfig.swift        # Loads API keys, detects Python path
     ├── Models/
     │   ├── AppState.swift            # Central orchestrator, owns all services
-    │   ├── MeetingApp.swift          # Enum of meeting app bundle IDs
+    │   ├── MeetingApp.swift          # Enum of meeting app bundle IDs (unused, retained)
     │   ├── TranscriptSegment.swift   # Legacy timestamped segment
     │   └── TranscriptionResult.swift # Codable result from Python script
     ├── Services/
-    │   ├── MeetingDetectorService.swift    # Polls NSWorkspace every 3s
-    │   ├── AudioCaptureService.swift       # SCStream wrapper → AudioFileRecorder
-    │   ├── AudioFileRecorder.swift         # Writes PCM to WAV file on disk
+    │   ├── AudioCaptureService.swift       # SCStream + AVCaptureSession → AudioFileRecorder
+    │   ├── AudioFileRecorder.swift         # Writes stereo interleaved PCM to WAV
     │   ├── DiarizationService.swift        # Swift ↔ Python subprocess bridge
     │   ├── CohereTranscriptionService.swift # REST client (retained for future use)
+    │   ├── MeetingDetectorService.swift    # Unused, retained for future use
     │   └── TranscriptFileWriter.swift      # Speaker-labeled FileHandle append
-    ├── Views/MenuBarView.swift       # Status, controls, transcript preview
+    ├── Views/MenuBarView.swift       # Status, controls, transcript list
     └── Utilities/
         ├── WAVEncoder.swift          # 44-byte RIFF header + PCM
         └── ProcessUtils.swift        # NSWorkspace running app helpers
@@ -62,9 +73,6 @@ hyv/
 pip install -r scripts/requirements.txt
 brew install xcodegen && xcodegen generate
 
-# Type-check (no Xcode needed)
-swiftc -typecheck -target arm64-apple-macos14.0 -sdk $(xcrun --show-sdk-path) $(find Hyv -name "*.swift")
-
 # Full build from CLI
 xcodebuild -project Hyv.xcodeproj -scheme Hyv -configuration Debug build SYMROOT=build
 open build/Debug/Hyv.app
@@ -74,6 +82,7 @@ open build/Debug/Hyv.app
 - `COHERE_TRIAL_API_KEY` — Cohere API key (in `.env`)
 - `HF_TOKEN` — HuggingFace token for pyannote gated model (in `.env`)
 - Screen Recording permission required at first launch
+- Microphone permission required at first launch
 - Python 3.10+ with pyannote.audio, torch, soundfile, numpy, requests
 
 ## Logging
@@ -82,9 +91,8 @@ All services use `os.Logger` with subsystem `com.hyv.app` and per-service catego
 | Category | Service |
 |---|---|
 | `config` | AppConfig — key loading, Python path detection |
-| `meeting-detection` | MeetingDetectorService — app detected/lost events |
-| `audio-capture` | AudioCaptureService — capture start/stop, errors |
-| `audio-recorder` | AudioFileRecorder — file creation, size/duration on stop |
+| `audio-capture` | AudioCaptureService — system audio + mic capture start/stop |
+| `audio-recorder` | AudioFileRecorder — stereo WAV creation, size/duration on stop |
 | `diarization` | DiarizationService — subprocess launch, timing, exit code |
 | `transcription` | CohereTranscriptionService — HTTP status, latency, retries |
 | `transcript-writer` | TranscriptFileWriter — file open/close |
@@ -92,16 +100,16 @@ All services use `os.Logger` with subsystem `com.hyv.app` and per-service catego
 
 Stream logs live:
 ```bash
-log stream --predicate 'subsystem == "com.hyv.app"' --level debug
+/usr/bin/log show --predicate 'subsystem == "com.hyv.app"' --last 1h --info
 ```
 
 Or filter in Console.app by subsystem `com.hyv.app`.
 
 ## Design Principles
 - **Accuracy over speed** — batch post-processing, not real-time streaming
-- User will wait 30 min for a 30 min meeting for accurate speaker-labeled results
-- Incremental file writes during *processing* (not during recording)
-- Record → Diarize → Transcribe → Write (full pipeline after meeting ends)
+- **Channel separation** — mic and system audio recorded as separate stereo channels, never mixed
+- Mic channel transcribed directly (energy VAD), system channel diarized with pyannote
+- Pyannote only processes the system channel (remote speakers) — cleaner signal, faster
+- User clicks Start/Stop manually — no automatic meeting detection
 - Adjacent same-speaker segments are merged for cleaner output
-- Fallback to unlabeled transcription if diarization fails
 - WAV recordings are cleaned up after successful transcription

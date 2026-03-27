@@ -75,12 +75,18 @@ open build/Debug/Hyv.app
 build/Debug/Hyv.app/Contents/MacOS/Hyv
 ```
 
-### Grant Screen Recording Permission
-On first launch, macOS will prompt you to allow Screen Recording.
+### Grant Permissions
+On first launch, macOS will prompt for two permissions:
+
+**Screen & System Audio Recording** (for capturing remote participants):
 - Go to **System Settings → Privacy & Security → Screen & System Audio Recording**
 - Add **Hyv.app** to the **top section** ("Screen & System Audio Recording"), NOT the "System Audio Recording Only" section
 - Make sure the toggle is **ON** (green)
 - **Quit and relaunch** the app after granting permission — macOS caches permissions
+
+**Microphone** (for capturing your voice):
+- Go to **System Settings → Privacy & Security → Microphone**
+- Toggle **ON** for Hyv.app
 
 **Important:** After each rebuild, macOS may see the new binary as a different app. If you get permission errors after rebuilding:
 1. Remove old Hyv entries from the Screen Recording list (select, click **−**)
@@ -116,21 +122,21 @@ open Hyv.xcodeproj
 
 ### Quick test (no real meeting needed)
 1. Launch the app — you'll see a waveform icon in the menu bar
-2. Click it — should show "No meeting detected"
-3. Click **Start Recording** (works even without a meeting app)
-4. Play some audio on your Mac (YouTube, music, etc.)
+2. Click it — should show "Ready"
+3. Click **Start Recording**
+4. Play some audio on your Mac (YouTube, music, etc.) and speak into your mic
 5. Wait a few seconds, then click **Stop Recording**
-6. The app transitions to "Processing..." — this runs the Python diarization + transcription
+6. The app transitions to "Processing..." — this runs the Python pipeline
 7. When done, check your Desktop for `Hyv_Transcript_*.txt`
+8. Your speech should be labeled "Me", played audio labeled "Remote"
 
 ### Test with a real meeting
-1. Open Zoom, Teams, FaceTime, WhatsApp, or any supported meeting app
-2. The menu bar icon should change and show "Meeting detected: Zoom"
-3. Start a meeting and click **Start Recording**
-4. Have a conversation
-5. Click **Stop Recording** when done
-6. Wait for processing (roughly 1:1 ratio — 10 min meeting ≈ 10 min processing)
-7. Speaker-labeled transcript appears on Desktop
+1. Start a call in any meeting app (Zoom, Teams, WhatsApp, etc.)
+2. Click the menu bar icon and press **Start Recording**
+3. Have a conversation
+4. Click **Stop Recording** when done
+5. Wait for processing (roughly 1:1 ratio — 10 min meeting ≈ 10 min processing)
+6. Transcript appears on Desktop with "Me" for your voice and "Remote" / "Remote (SPEAKER_XX)" for others
 
 ### Test the Python script directly
 ```bash
