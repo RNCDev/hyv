@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import argparse, json, sys, os, time, tempfile
+import argparse, json, sys, os, time, tempfile, threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import soundfile as sf
 import numpy as np
 import requests
@@ -123,24 +124,42 @@ def main():
     speakers = sorted(set(s["speaker"] for s in raw_segments))
     progress(0, total, f"Diarization complete. Found {len(speakers)} speakers, {total} segments.")
 
-    # Transcribe each segment
-    results = []
-    for i, seg in enumerate(raw_segments):
+    # Prepare segment audio data
+    prepared = []
+    for seg in raw_segments:
         start_sample = int(seg["start"] * sample_rate)
         end_sample = int(seg["end"] * sample_rate)
-        segment_audio = audio_data[start_sample:end_sample]
+        prepared.append((seg, audio_data[start_sample:end_sample]))
 
-        progress(i + 1, total, f"Transcribing {seg['speaker']} [{format_time(seg['start'])}-{format_time(seg['end'])}]")
+    # Transcribe segments in parallel
+    results = [None] * total
+    completed = [0]
+    lock = threading.Lock()
 
+    def transcribe_worker(index, seg, segment_audio):
         text = transcribe_segment(segment_audio, sample_rate, args.cohere_key, args.language)
+        with lock:
+            completed[0] += 1
+            progress(completed[0], total, f"Transcribed {completed[0]}/{total} segments")
+        return index, seg, text
 
-        if text and text not in ("[transcription failed", ""):
-            results.append({
-                "start": round(seg["start"], 2),
-                "end": round(seg["end"], 2),
-                "speaker": seg["speaker"],
-                "text": text
-            })
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [
+            executor.submit(transcribe_worker, i, seg, audio)
+            for i, (seg, audio) in enumerate(prepared)
+        ]
+        for future in as_completed(futures):
+            idx, seg, text = future.result()
+            if text and text not in ("[transcription failed", ""):
+                results[idx] = {
+                    "start": round(seg["start"], 2),
+                    "end": round(seg["end"], 2),
+                    "speaker": seg["speaker"],
+                    "text": text
+                }
+
+    # Remove None entries (failed transcriptions)
+    results = [r for r in results if r is not None]
 
     progress(total, total, "Done")
 

@@ -78,37 +78,28 @@ struct MenuBarView: View {
                 }
             }
 
-            Divider()
+            // Recent transcripts
+            if !recentTranscripts.isEmpty {
+                Divider()
 
-            // Transcript preview
-            Text("Transcript")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
-            if appState.transcriptLines.isEmpty {
-                Text(emptyStateText)
-                    .font(.caption)
+                Text("Recent Transcripts")
+                    .font(.subheadline)
                     .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(appState.transcriptLines.suffix(10).enumerated()), id: \.offset) { index, line in
-                                Text(line)
-                                    .font(.caption)
-                                    .textSelection(.enabled)
-                                    .id(index)
-                            }
+
+                ForEach(recentTranscripts, id: \.path) { url in
+                    HStack {
+                        Image(systemName: "doc.text")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text(url.lastPathComponent)
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer()
+                        Button("Open") {
+                            NSWorkspace.shared.open(url)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(maxHeight: 150)
-                    .onChange(of: appState.transcriptLines.count) {
-                        withAnimation {
-                            proxy.scrollTo(appState.transcriptLines.suffix(10).count - 1, anchor: .bottom)
-                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
                     }
                 }
             }
@@ -139,12 +130,23 @@ struct MenuBarView: View {
         }
     }
 
-    private var emptyStateText: String {
-        switch appState.status {
-        case .recording: return "Recording... transcript will appear after processing."
-        case .processing: return "Processing audio..."
-        default: return "No transcript yet."
-        }
+    private var recentTranscripts: [URL] {
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: desktop,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: .skipsHiddenFiles
+        )) ?? []
+
+        return files
+            .filter { $0.lastPathComponent.hasPrefix("Hyv_Transcript_") && $0.pathExtension == "txt" }
+            .sorted {
+                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return d1 > d2
+            }
+            .prefix(5)
+            .map { $0 }
     }
 
     private var statusColor: Color {
