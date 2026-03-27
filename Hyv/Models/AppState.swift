@@ -1,5 +1,4 @@
 import SwiftUI
-import Combine
 import os
 
 private let logger = Logger(subsystem: "com.hyv.app", category: "app-state")
@@ -8,14 +7,13 @@ private let logger = Logger(subsystem: "com.hyv.app", category: "app-state")
 final class AppState: ObservableObject {
     enum Status: Equatable {
         case idle
-        case meetingDetected
         case recording
         case processing(String)
         case error(String)
 
         static func == (lhs: Status, rhs: Status) -> Bool {
             switch (lhs, rhs) {
-            case (.idle, .idle), (.meetingDetected, .meetingDetected), (.recording, .recording):
+            case (.idle, .idle), (.recording, .recording):
                 return true
             case let (.processing(a), .processing(b)):
                 return a == b
@@ -28,13 +26,11 @@ final class AppState: ObservableObject {
     }
 
     @Published var status: Status = .idle
-    @Published var detectedApp: String? = nil
     @Published var transcriptLines: [String] = []
     @Published var recordingStartTime: Date? = nil
     @Published var currentTranscriptPath: String? = nil
 
     // Services
-    let meetingDetector = MeetingDetectorService()
     private var recorder = AudioFileRecorder()
     private var audioCaptureService: AudioCaptureService
     private let diarizationService: DiarizationService
@@ -42,14 +38,11 @@ final class AppState: ObservableObject {
 
     // Pipeline
     private var processingTask: Task<Void, Never>?
-    private var detectorCancellable: AnyCancellable?
-    private var meetingGoneTimer: Task<Void, Never>?
     private var currentRecordingURL: URL?
 
     var menuBarIcon: String {
         switch status {
         case .idle: return "waveform.slash"
-        case .meetingDetected: return "waveform.circle"
         case .recording: return "waveform"
         case .processing: return "gear"
         case .error: return "exclamationmark.triangle"
@@ -58,8 +51,7 @@ final class AppState: ObservableObject {
 
     var statusText: String {
         switch status {
-        case .idle: return "No meeting detected"
-        case .meetingDetected: return "Meeting detected: \(detectedApp ?? "Unknown")"
+        case .idle: return "Ready"
         case .recording: return "Recording..."
         case .processing(let msg): return msg
         case .error(let msg): return "Error: \(msg)"
@@ -76,49 +68,13 @@ final class AppState: ObservableObject {
             hfToken: config.huggingFaceToken,
             cohereKey: config.cohereApiKey
         )
-        setupMeetingDetection()
         setupTerminationHandler()
-    }
-
-    // MARK: - Meeting Detection
-
-    private func setupMeetingDetection() {
-        meetingDetector.start()
-
-        detectorCancellable = meetingDetector.$detectedApp
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] app in
-                guard let self = self else { return }
-                if let app = app {
-                    self.detectedApp = app.displayName
-                    if self.status == .idle {
-                        logger.info("Status: idle → meetingDetected (\(app.displayName))")
-                        self.status = .meetingDetected
-                    }
-                    self.meetingGoneTimer?.cancel()
-                    self.meetingGoneTimer = nil
-                } else {
-                    if self.status == .meetingDetected {
-                        logger.info("Status: meetingDetected → idle (app closed)")
-                        self.status = .idle
-                        self.detectedApp = nil
-                    } else if self.status == .recording {
-                        logger.info("Meeting app closed during recording — auto-stop in 10s")
-                        self.meetingGoneTimer?.cancel()
-                        self.meetingGoneTimer = Task { @MainActor [weak self] in
-                            try? await Task.sleep(nanoseconds: 10_000_000_000)
-                            guard !Task.isCancelled else { return }
-                            self?.stopRecording()
-                        }
-                    }
-                }
-            }
     }
 
     // MARK: - Recording Control
 
     func startRecording() {
-        guard status == .meetingDetected || status == .idle else {
+        guard status == .idle else {
             logger.warning("startRecording called in unexpected state: \(String(describing: self.status))")
             return
         }
@@ -143,16 +99,11 @@ final class AppState: ObservableObject {
             return
         }
 
-        logger.info("Status: → recording (app: \(self.detectedApp ?? "unknown"))")
+        logger.info("Status: idle → recording")
         status = .recording
         recordingStartTime = Date()
         transcriptLines = []
         currentTranscriptPath = nil
-
-        // Use any running meeting app for transcript labeling (including background apps)
-        if detectedApp == nil {
-            detectedApp = meetingDetector.runningMeetingApp?.displayName
-        }
 
         // Create fresh recorder
         recorder = AudioFileRecorder()
@@ -194,8 +145,6 @@ final class AppState: ObservableObject {
 
             // Transition to processing
             self.status = .processing("Starting post-processing...")
-            self.meetingGoneTimer?.cancel()
-            self.meetingGoneTimer = nil
 
             // Start post-processing
             self.processRecording(audioURL: audioURL)
@@ -222,7 +171,6 @@ final class AppState: ObservableObject {
 
                 // Open transcript file with metadata
                 try self.fileWriter.open(
-                    meetingApp: self.detectedApp,
                     duration: duration,
                     speakerCount: result.speakers.count
                 )
@@ -249,9 +197,8 @@ final class AppState: ObservableObject {
                     logger.error("Failed to delete WAV file: \(error.localizedDescription)")
                 }
 
-                let finalStatus: String = self.meetingDetector.isMeetingActive ? "meetingDetected" : "idle"
-                logger.info("Processing complete → \(finalStatus)")
-                self.status = self.meetingDetector.isMeetingActive ? .meetingDetected : .idle
+                logger.info("Processing complete → idle")
+                self.status = .idle
                 self.recordingStartTime = nil
 
             } catch {
@@ -263,7 +210,7 @@ final class AppState: ObservableObject {
                     let transcriber = CohereTranscriptionService(apiKey: AppConfig.shared.cohereApiKey)
                     let text = try await transcriber.transcribe(wavData: wavData)
 
-                    try self.fileWriter.open(meetingApp: self.detectedApp)
+                    try self.fileWriter.open()
                     self.currentTranscriptPath = self.fileWriter.filePath?.path
                     self.fileWriter.appendSegment(text, timestamp: 0)
                     self.transcriptLines.append("[00:00] \(text)")
@@ -277,9 +224,8 @@ final class AppState: ObservableObject {
                         logger.error("Failed to delete WAV file after fallback: \(error.localizedDescription)")
                     }
 
-                    let finalStatus: String = self.meetingDetector.isMeetingActive ? "meetingDetected" : "idle"
-                    logger.info("Fallback transcription complete → \(finalStatus)")
-                    self.status = self.meetingDetector.isMeetingActive ? .meetingDetected : .idle
+                    logger.info("Fallback transcription complete → idle")
+                    self.status = .idle
                 } catch {
                     logger.error("Fallback transcription also failed: \(error.localizedDescription)")
                     self.fileWriter.close()

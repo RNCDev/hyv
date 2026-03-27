@@ -22,6 +22,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Hyv/Hyv.entitlements
         INFOPLIST_KEY_LSUIElement: true
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: "Hyv needs screen capture access to record meeting audio."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Hyv needs microphone access to capture your voice during meetings."
     dependencies:
       - sdk: ScreenCaptureKit.framework
       - sdk: AVFoundation.framework

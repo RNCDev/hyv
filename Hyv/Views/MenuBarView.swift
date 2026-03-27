@@ -58,7 +58,7 @@ struct MenuBarView: View {
                 }
             }
 
-            // Transcript file path + open button
+            // Transcript file path + open/delete buttons
             if let path = appState.currentTranscriptPath {
                 HStack {
                     Text(URL(fileURLWithPath: path).lastPathComponent)
@@ -74,6 +74,16 @@ struct MenuBarView: View {
                         }
                         .font(.caption)
                         .buttonStyle(.borderless)
+
+                        Button(role: .destructive) {
+                            try? FileManager.default.removeItem(atPath: path)
+                            appState.currentTranscriptPath = nil
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                        .foregroundColor(.secondary)
                     }
                 }
             }
@@ -100,6 +110,15 @@ struct MenuBarView: View {
                         }
                         .font(.caption)
                         .buttonStyle(.borderless)
+
+                        Button(role: .destructive) {
+                            try? FileManager.default.removeItem(at: url)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .font(.caption)
+                        .buttonStyle(.borderless)
+                        .foregroundColor(.secondary)
                     }
                 }
             }
@@ -124,15 +143,13 @@ struct MenuBarView: View {
     }
 
     private var canStartRecording: Bool {
-        switch appState.status {
-        case .idle, .meetingDetected: return true
-        default: return false
-        }
+        if case .idle = appState.status { return true }
+        return false
     }
 
     private var canOpenTranscript: Bool {
         switch appState.status {
-        case .idle, .meetingDetected, .error: return true
+        case .idle, .error: return true
         default: return false
         }
     }
@@ -159,7 +176,6 @@ struct MenuBarView: View {
     private var statusColor: Color {
         switch appState.status {
         case .idle: return .secondary
-        case .meetingDetected: return .orange
         case .recording: return .green
         case .processing: return .blue
         case .error: return .red

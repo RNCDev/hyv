@@ -8,7 +8,7 @@ final class TranscriptFileWriter {
     private(set) var filePath: URL?
 
     /// Open a new transcript file on the Desktop
-    func open(meetingApp: String? = nil, duration: TimeInterval? = nil, speakerCount: Int? = nil) throws {
+    func open(duration: TimeInterval? = nil, speakerCount: Int? = nil) throws {
         let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HH-mm"
@@ -23,9 +23,6 @@ final class TranscriptFileWriter {
         // Write header
         var header = "=== Hyv Transcript ===\n"
         header += "Date: \(Date().formatted(date: .long, time: .shortened))\n"
-        if let app = meetingApp {
-            header += "Meeting: \(app)\n"
-        }
         if let dur = duration {
             header += "Duration: \(formatElapsed(dur))\n"
         }
