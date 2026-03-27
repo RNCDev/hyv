@@ -25,7 +25,7 @@ final class DiarizationService: @unchecked Sendable {
     /// - Returns: TranscriptionResult with all speaker-labeled segments
     func process(
         audioPath: URL,
-        minSpeakers: Int = 2,
+        minSpeakers: Int = 1,
         maxSpeakers: Int = 10,
         progress: @escaping @Sendable (String) -> Void
     ) async throws -> TranscriptionResult {
