@@ -7,7 +7,7 @@ Usage:
 After running, the models/ directory can be bundled with the app.
 The diarize_and_transcribe.py script accepts --models-dir to use these.
 """
-import argparse, os, sys
+import argparse, os
 
 def main():
     parser = argparse.ArgumentParser(description="Download Hyv models for offline use")
@@ -16,56 +16,37 @@ def main():
     args = parser.parse_args()
 
     os.makedirs(args.output, exist_ok=True)
+    from huggingface_hub import snapshot_download
 
     # 1. Pyannote diarization pipeline + sub-models
-    print("Downloading pyannote speaker-diarization-3.1...")
-    from pyannote.audio import Pipeline
-    pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1",
-        token=args.hf_token
-    )
-
     diarization_dir = os.path.join(args.output, "pyannote-diarization")
-    os.makedirs(diarization_dir, exist_ok=True)
 
-    # Save the segmentation model
-    print("  Saving segmentation model...")
-    seg_dir = os.path.join(diarization_dir, "segmentation")
-    os.makedirs(seg_dir, exist_ok=True)
-    pipeline._segmentation.model.save_pretrained(seg_dir)
+    models = [
+        ("pyannote/speaker-diarization-3.1", "pipeline"),
+        ("pyannote/segmentation-3.0", "segmentation"),
+        ("pyannote/wespeaker-voxceleb-resnet34-LM", "embedding"),
+    ]
 
-    # Save the embedding model
-    print("  Saving embedding model...")
-    emb_dir = os.path.join(diarization_dir, "embedding")
-    os.makedirs(emb_dir, exist_ok=True)
-    # The embedding model is a wespeaker model — save via huggingface_hub
-    from huggingface_hub import snapshot_download
-    snapshot_download(
-        "pyannote/wespeaker-voxceleb-resnet34-LM",
-        local_dir=emb_dir,
-        token=args.hf_token
-    )
+    for repo_id, subdir in models:
+        local_dir = os.path.join(diarization_dir, subdir)
+        print(f"Downloading {repo_id}...")
+        snapshot_download(repo_id, local_dir=local_dir, token=args.hf_token)
+        print(f"  Saved to {local_dir}/")
 
-    # Save the segmentation model files too
-    snapshot_download(
-        "pyannote/segmentation-3.0",
-        local_dir=seg_dir,
-        token=args.hf_token
-    )
-
-    # Save pipeline config
-    snapshot_download(
-        "pyannote/speaker-diarization-3.1",
-        local_dir=os.path.join(diarization_dir, "pipeline"),
-        token=args.hf_token
-    )
-
-    print(f"  Pyannote models saved to {diarization_dir}/")
+    # Patch pipeline config to use local paths
+    config_path = os.path.join(diarization_dir, "pipeline", "config.yaml")
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            config = f.read()
+        config = config.replace("pyannote/segmentation-3.0", os.path.abspath(os.path.join(diarization_dir, "segmentation")))
+        config = config.replace("pyannote/wespeaker-voxceleb-resnet34-LM", os.path.abspath(os.path.join(diarization_dir, "embedding")))
+        with open(config_path, "w") as f:
+            f.write(config)
+        print("  Patched pipeline config with local paths")
 
     # 2. Cohere Transcribe model
-    print("Downloading CohereLabs/cohere-transcribe-03-2026...")
     transcribe_dir = os.path.join(args.output, "cohere-transcribe")
-    os.makedirs(transcribe_dir, exist_ok=True)
+    print("Downloading CohereLabs/cohere-transcribe-03-2026...")
 
     from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
     processor = AutoProcessor.from_pretrained(
@@ -76,8 +57,13 @@ def main():
     )
     processor.save_pretrained(transcribe_dir)
     model.save_pretrained(transcribe_dir)
-
-    print(f"  Cohere model saved to {transcribe_dir}/")
+    # Also copy remote code files needed for loading
+    snapshot_download(
+        "CohereLabs/cohere-transcribe-03-2026",
+        local_dir=transcribe_dir,
+        token=args.hf_token
+    )
+    print(f"  Saved to {transcribe_dir}/")
 
     # Summary
     total_size = 0
