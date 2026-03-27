@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "transcription")
 
 protocol TranscriptionService {
     func transcribe(wavData: Data) async throws -> String
@@ -21,12 +24,15 @@ final class CohereTranscriptionService: TranscriptionService {
         var lastError: Error?
 
         for attempt in 0..<maxRetries {
+            if attempt > 0 {
+                let delay = pow(2.0, Double(attempt - 1))
+                logger.warning("Retrying transcription (attempt \(attempt + 1)/\(self.maxRetries)) after \(String(format: "%.0f", delay))s: \(lastError?.localizedDescription ?? "")")
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
             do {
                 return try await sendRequest(wavData: wavData)
             } catch let error as TranscriptionError where error.isRetryable {
                 lastError = error
-                let delay = pow(2.0, Double(attempt)) // 1s, 2s, 4s
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             } catch {
                 throw error
             }
@@ -59,24 +65,34 @@ final class CohereTranscriptionService: TranscriptionService {
 
         request.httpBody = body
 
+        let startTime = CFAbsoluteTimeGetCurrent()
         let (data, response) = try await session.data(for: request)
+        let elapsed = CFAbsoluteTimeGetCurrent() - startTime
 
         guard let httpResponse = response as? HTTPURLResponse else {
+            logger.error("Transcription request returned non-HTTP response")
             throw TranscriptionError.invalidResponse
         }
+
+        logger.info("Transcription HTTP \(httpResponse.statusCode) in \(String(format: "%.2f", elapsed))s (\(wavData.count / 1024) KB sent)")
 
         switch httpResponse.statusCode {
         case 200:
             let result = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
+            logger.info("Transcription result: \(result.text.count) chars")
             return result.text
         case 429:
+            logger.warning("Transcription rate limited (429)")
             throw TranscriptionError.rateLimited
         case 401, 403:
+            logger.error("Transcription unauthorized (\(httpResponse.statusCode)) — check API key")
             throw TranscriptionError.unauthorized
         case 500...599:
+            logger.error("Transcription server error (\(httpResponse.statusCode))")
             throw TranscriptionError.serverError(httpResponse.statusCode)
         default:
             let message = String(data: data, encoding: .utf8) ?? "Unknown error"
+            logger.error("Transcription API error (\(httpResponse.statusCode)): \(message.prefix(200))")
             throw TranscriptionError.apiError(httpResponse.statusCode, message)
         }
     }

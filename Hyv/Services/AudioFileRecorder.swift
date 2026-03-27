@@ -1,6 +1,9 @@
 import Foundation
 import CoreMedia
 import AVFoundation
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "audio-recorder")
 
 actor AudioFileRecorder {
     private let sampleRate: Int = 16000
@@ -36,6 +39,7 @@ actor AudioFileRecorder {
         // Write WAV header with placeholder sizes
         writeWAVHeader()
 
+        logger.info("Recording started: \(url.lastPathComponent)")
         return url
     }
 
@@ -106,6 +110,10 @@ actor AudioFileRecorder {
         fileHandle.synchronizeFile()
         fileHandle.closeFile()
         self.fileHandle = nil
+
+        let fileSizeMB = Double(totalDataBytes) / (1024 * 1024)
+        let durationSec = Double(totalDataBytes) / Double(sampleRate * channels * bitsPerSample / 8)
+        logger.info("Recording stopped: \(String(format: "%.1f", fileSizeMB)) MB, \(String(format: "%.0f", durationSec))s audio")
     }
 
     // MARK: - Private

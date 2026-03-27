@@ -157,6 +157,27 @@ The app looks for `.env` by walking up from the app bundle to the repo root. If 
 - Toggle **ON**, then **quit and relaunch** the app
 - After rebuilds, you may need to remove and re-add Hyv.app
 
+### Reading logs
+
+All services emit structured logs via `os.Logger`. Stream them live while the app is running:
+
+```bash
+log stream --predicate 'subsystem == "com.hyv.app"' --level debug
+```
+
+Useful filters:
+```bash
+# Only errors and warnings
+log stream --predicate 'subsystem == "com.hyv.app"' --level error
+
+# Specific service (e.g. diarization)
+log stream --predicate 'subsystem == "com.hyv.app" AND category == "diarization"'
+```
+
+Or open **Console.app**, search for `com.hyv.app` in the top-right filter box.
+
+Log categories: `config`, `meeting-detection`, `audio-capture`, `audio-recorder`, `diarization`, `transcription`, `transcript-writer`, `app-state`.
+
 ### "Processing failed: Script not found"
 The app walks up from its bundle path to find `scripts/diarize_and_transcribe.py`. If the app is nested too deep or outside the repo, it may fail. Run from the repo directory or ensure the build output is within the repo tree.
 

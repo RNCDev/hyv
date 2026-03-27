@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "transcript-writer")
 
 final class TranscriptFileWriter {
     private var fileHandle: FileHandle?
@@ -15,6 +18,7 @@ final class TranscriptFileWriter {
         FileManager.default.createFile(atPath: path.path, contents: nil)
         fileHandle = try FileHandle(forWritingTo: path)
         filePath = path
+        logger.info("Transcript file opened: \(path.lastPathComponent)")
 
         // Write header
         var header = "=== Hyv Transcript ===\n"
@@ -64,7 +68,10 @@ final class TranscriptFileWriter {
 
     /// Close the file and write footer
     func close() {
-        guard let fileHandle = fileHandle else { return }
+        guard let fileHandle = fileHandle else {
+            logger.debug("close() called but no file is open")
+            return
+        }
 
         let footer = "\n=== End of Transcript ===\n"
         fileHandle.seekToEndOfFile()
@@ -73,6 +80,7 @@ final class TranscriptFileWriter {
         fileHandle.closeFile()
 
         self.fileHandle = nil
+        logger.info("Transcript file closed: \(self.filePath?.lastPathComponent ?? "unknown")")
     }
 
     private func formatElapsed(_ interval: TimeInterval) -> String {

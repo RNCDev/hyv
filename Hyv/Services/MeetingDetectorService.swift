@@ -1,6 +1,9 @@
 import Foundation
 import Combine
 import AppKit
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "meeting-detection")
 
 @MainActor
 final class MeetingDetectorService: ObservableObject {
@@ -16,6 +19,7 @@ final class MeetingDetectorService: ObservableObject {
     private var timerCancellable: AnyCancellable?
 
     func start() {
+        logger.info("Meeting detection started (polling every 3s)")
         timerCancellable = Timer.publish(every: 3, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
@@ -38,12 +42,18 @@ final class MeetingDetectorService: ObservableObject {
         // Only auto-detect apps that don't run persistently in the background
         for app in MeetingApp.allCases where !app.runsInBackground {
             if running.contains(app.rawValue) {
+                if detectedApp != app {
+                    logger.info("Meeting app detected: \(app.displayName)")
+                }
                 detectedApp = app
                 isMeetingActive = true
                 return
             }
         }
 
+        if detectedApp != nil {
+            logger.info("Meeting app no longer running: \(self.detectedApp!.displayName)")
+        }
         detectedApp = nil
         isMeetingActive = false
     }

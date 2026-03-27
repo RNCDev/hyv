@@ -2,6 +2,9 @@ import Foundation
 import ScreenCaptureKit
 import CoreMedia
 import AVFoundation
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "audio-capture")
 
 final class AudioCaptureService: NSObject, @unchecked Sendable {
     let recorder: AudioFileRecorder
@@ -24,12 +27,18 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
     }
 
     func startCapture() async throws {
-        guard !isCapturing else { return }
+        guard !isCapturing else {
+            logger.debug("startCapture called but already capturing")
+            return
+        }
+
+        logger.info("Starting audio capture via ScreenCaptureKit")
 
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
         guard let display = content.displays.first else {
+            logger.error("No display found for audio capture")
             throw AudioCaptureError.noDisplay
         }
 
@@ -54,6 +63,7 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
         try await stream.startCapture()
         self.stream = stream
         self.isCapturing = true
+        logger.info("Audio capture started (16kHz mono, excludes own process)")
     }
 
     func stopCapture() async {
@@ -61,8 +71,9 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
 
         do {
             try await stream.stopCapture()
+            logger.info("Audio capture stopped")
         } catch {
-            print("Warning: Error stopping capture: \(error)")
+            logger.error("Error stopping capture: \(error.localizedDescription)")
         }
 
         self.stream = nil

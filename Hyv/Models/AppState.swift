@@ -1,5 +1,8 @@
 import SwiftUI
 import Combine
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "app-state")
 
 @MainActor
 final class AppState: ObservableObject {
@@ -89,15 +92,18 @@ final class AppState: ObservableObject {
                 if let app = app {
                     self.detectedApp = app.displayName
                     if self.status == .idle {
+                        logger.info("Status: idle → meetingDetected (\(app.displayName))")
                         self.status = .meetingDetected
                     }
                     self.meetingGoneTimer?.cancel()
                     self.meetingGoneTimer = nil
                 } else {
                     if self.status == .meetingDetected {
+                        logger.info("Status: meetingDetected → idle (app closed)")
                         self.status = .idle
                         self.detectedApp = nil
                     } else if self.status == .recording {
+                        logger.info("Meeting app closed during recording — auto-stop in 10s")
                         self.meetingGoneTimer?.cancel()
                         self.meetingGoneTimer = Task { @MainActor [weak self] in
                             try? await Task.sleep(nanoseconds: 10_000_000_000)
@@ -112,25 +118,32 @@ final class AppState: ObservableObject {
     // MARK: - Recording Control
 
     func startRecording() {
-        guard status == .meetingDetected || status == .idle else { return }
+        guard status == .meetingDetected || status == .idle else {
+            logger.warning("startRecording called in unexpected state: \(String(describing: self.status))")
+            return
+        }
 
         // Check tokens
         guard AppConfig.shared.hasValidApiKey else {
+            logger.error("Cannot start recording: missing Cohere API key")
             status = .error("No Cohere API key. Set COHERE_TRIAL_API_KEY in .env")
             return
         }
         guard AppConfig.shared.hasValidHFToken else {
+            logger.error("Cannot start recording: missing HuggingFace token")
             status = .error("No HuggingFace token. Set HF_TOKEN in .env")
             return
         }
 
         // Check permission
         guard AudioCaptureService.hasPermission() else {
+            logger.error("Cannot start recording: missing Screen Recording permission")
             AudioCaptureService.requestPermission()
             status = .error("Grant Screen Recording permission in System Settings")
             return
         }
 
+        logger.info("Status: → recording (app: \(self.detectedApp ?? "unknown"))")
         status = .recording
         recordingStartTime = Date()
         transcriptLines = []
@@ -151,20 +164,30 @@ final class AppState: ObservableObject {
                 self.currentRecordingURL = audioURL
                 try await audioCaptureService.startCapture()
             } catch {
+                logger.error("Recording setup failed: \(error.localizedDescription)")
                 self.status = .error("Recording failed: \(error.localizedDescription)")
             }
         }
     }
 
     func stopRecording() {
-        guard status == .recording else { return }
+        guard status == .recording else {
+            logger.warning("stopRecording called in unexpected state: \(String(describing: self.status))")
+            return
+        }
 
+        logger.info("Stopping recording")
         Task {
             // Stop capture
             await audioCaptureService.stopCapture()
-            try? await recorder.stopRecording()
+            do {
+                try await recorder.stopRecording()
+            } catch {
+                logger.error("Error stopping recorder: \(error.localizedDescription)")
+            }
 
             guard let audioURL = self.currentRecordingURL else {
+                logger.error("stopRecording: no currentRecordingURL set")
                 self.status = .error("No recording file found")
                 return
             }
@@ -182,6 +205,7 @@ final class AppState: ObservableObject {
     // MARK: - Post-Processing
 
     private func processRecording(audioURL: URL) {
+        logger.info("Status: → processing (\(audioURL.lastPathComponent))")
         processingTask = Task {
             do {
                 let result = try await diarizationService.process(
@@ -218,13 +242,21 @@ final class AppState: ObservableObject {
                 self.fileWriter.close()
 
                 // Clean up WAV file after successful transcription
-                try? FileManager.default.removeItem(at: audioURL)
+                do {
+                    try FileManager.default.removeItem(at: audioURL)
+                    logger.info("WAV file deleted: \(audioURL.lastPathComponent)")
+                } catch {
+                    logger.error("Failed to delete WAV file: \(error.localizedDescription)")
+                }
 
+                let finalStatus: String = self.meetingDetector.isMeetingActive ? "meetingDetected" : "idle"
+                logger.info("Processing complete → \(finalStatus)")
                 self.status = self.meetingDetector.isMeetingActive ? .meetingDetected : .idle
                 self.recordingStartTime = nil
 
             } catch {
                 // Fallback: transcribe without speaker labels if diarization fails
+                logger.error("Diarization failed: \(error.localizedDescription) — falling back to unlabeled transcription")
                 self.status = .processing("Diarization failed, transcribing without speaker labels...")
                 do {
                     let wavData = try Data(contentsOf: audioURL)
@@ -238,10 +270,18 @@ final class AppState: ObservableObject {
                     self.fileWriter.close()
 
                     // Clean up WAV file after successful fallback
-                    try? FileManager.default.removeItem(at: audioURL)
+                    do {
+                        try FileManager.default.removeItem(at: audioURL)
+                        logger.info("WAV file deleted after fallback: \(audioURL.lastPathComponent)")
+                    } catch {
+                        logger.error("Failed to delete WAV file after fallback: \(error.localizedDescription)")
+                    }
 
+                    let finalStatus: String = self.meetingDetector.isMeetingActive ? "meetingDetected" : "idle"
+                    logger.info("Fallback transcription complete → \(finalStatus)")
                     self.status = self.meetingDetector.isMeetingActive ? .meetingDetected : .idle
                 } catch {
+                    logger.error("Fallback transcription also failed: \(error.localizedDescription)")
                     self.fileWriter.close()
                     self.status = .error("Processing failed: \(error.localizedDescription)")
                 }

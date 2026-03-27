@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "config")
 
 struct AppConfig {
     let cohereApiKey: String
@@ -12,6 +15,7 @@ struct AppConfig {
         let envHF = ProcessInfo.processInfo.environment["HF_TOKEN"] ?? ""
 
         if !envCohere.isEmpty && !envHF.isEmpty {
+            logger.info("Loaded API keys from environment variables")
             return AppConfig(
                 cohereApiKey: envCohere,
                 huggingFaceToken: envHF,
@@ -33,6 +37,7 @@ struct AppConfig {
             let hf = !envHF.isEmpty ? envHF : (env["HF_TOKEN"] ?? "")
 
             if !cohere.isEmpty || !hf.isEmpty {
+                logger.info("Loaded API keys from .env file: \(path)")
                 return AppConfig(
                     cohereApiKey: cohere,
                     huggingFaceToken: hf,
@@ -42,6 +47,7 @@ struct AppConfig {
             }
         }
 
+        logger.error("No API keys found in environment or .env files")
         return AppConfig(
             cohereApiKey: "",
             huggingFaceToken: "",
@@ -80,9 +86,11 @@ struct AppConfig {
         ]
         for path in candidates {
             if FileManager.default.isExecutableFile(atPath: path) {
+                logger.info("Detected Python at: \(path)")
                 return path
             }
         }
+        logger.error("No Python 3 found, falling back to 'python3'")
         return "python3"
     }
 

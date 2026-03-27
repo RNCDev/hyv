@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.hyv.app", category: "diarization")
 
 final class DiarizationService: @unchecked Sendable {
     private let pythonPath: String
@@ -28,13 +31,18 @@ final class DiarizationService: @unchecked Sendable {
     ) async throws -> TranscriptionResult {
         // Validate python exists
         guard FileManager.default.isExecutableFile(atPath: pythonPath) else {
+            logger.error("Python not found at: \(self.pythonPath)")
             throw DiarizationError.pythonNotFound(pythonPath)
         }
 
         // Validate script exists
         guard FileManager.default.fileExists(atPath: scriptPath) else {
+            logger.error("Diarization script not found at: \(self.scriptPath)")
             throw DiarizationError.scriptNotFound(scriptPath)
         }
+
+        logger.info("Starting diarization: \(audioPath.lastPathComponent), speakers: \(minSpeakers)-\(maxSpeakers)")
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async { [pythonPath, scriptPath, hfToken, cohereKey] in
@@ -76,7 +84,9 @@ final class DiarizationService: @unchecked Sendable {
 
                 do {
                     try process.run()
+                    logger.info("Python subprocess launched (PID: \(process.processIdentifier))")
                 } catch {
+                    logger.error("Failed to launch Python subprocess: \(error.localizedDescription)")
                     continuation.resume(throwing: DiarizationError.processFailed(-1, "Failed to launch: \(error.localizedDescription)"))
                     return
                 }
@@ -90,7 +100,11 @@ final class DiarizationService: @unchecked Sendable {
                 let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
                 let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
 
+                let elapsed = CFAbsoluteTimeGetCurrent() - startTime
+                logger.info("Python subprocess exited with code \(process.terminationStatus) after \(String(format: "%.1f", elapsed))s")
+
                 guard process.terminationStatus == 0 else {
+                    logger.error("Diarization failed (exit \(process.terminationStatus)): \(stderrText.prefix(500))")
                     continuation.resume(throwing: DiarizationError.processFailed(
                         process.terminationStatus,
                         stderrText.isEmpty ? "Process exited with code \(process.terminationStatus)" : stderrText
@@ -108,6 +122,7 @@ final class DiarizationService: @unchecked Sendable {
                     }
 
                     let result = try JSONDecoder().decode(TranscriptionResult.self, from: stdoutData)
+                    logger.info("Diarization complete: \(result.segments.count) segments, \(result.speakers.count) speakers")
                     continuation.resume(returning: result)
                 } catch {
                     let rawOutput = String(data: stdoutData, encoding: .utf8) ?? "<non-utf8>"

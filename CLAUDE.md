@@ -76,6 +76,27 @@ open build/Debug/Hyv.app
 - Screen Recording permission required at first launch
 - Python 3.10+ with pyannote.audio, torch, soundfile, numpy, requests
 
+## Logging
+All services use `os.Logger` with subsystem `com.hyv.app` and per-service categories:
+
+| Category | Service |
+|---|---|
+| `config` | AppConfig — key loading, Python path detection |
+| `meeting-detection` | MeetingDetectorService — app detected/lost events |
+| `audio-capture` | AudioCaptureService — capture start/stop, errors |
+| `audio-recorder` | AudioFileRecorder — file creation, size/duration on stop |
+| `diarization` | DiarizationService — subprocess launch, timing, exit code |
+| `transcription` | CohereTranscriptionService — HTTP status, latency, retries |
+| `transcript-writer` | TranscriptFileWriter — file open/close |
+| `app-state` | AppState — state transitions, pipeline stages, errors |
+
+Stream logs live:
+```bash
+log stream --predicate 'subsystem == "com.hyv.app"' --level debug
+```
+
+Or filter in Console.app by subsystem `com.hyv.app`.
+
 ## Design Principles
 - **Accuracy over speed** — batch post-processing, not real-time streaming
 - User will wait 30 min for a 30 min meeting for accurate speaker-labeled results

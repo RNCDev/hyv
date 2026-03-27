@@ -101,6 +101,16 @@ During meeting:  AudioCaptureService → AudioFileRecorder (WAV to disk)
 After meeting:   Python (pyannote diarization → Cohere API) → TranscriptFileWriter
 ```
 
+## Debugging
+
+All services log to `os.Logger` (subsystem `com.hyv.app`). Stream logs live:
+
+```bash
+log stream --predicate 'subsystem == "com.hyv.app"' --level debug
+```
+
+Or open Console.app and filter by subsystem `com.hyv.app`. Logs cover state transitions, recording lifecycle, diarization subprocess timing, API calls and retries, and all error paths.
+
 See [CLAUDE.md](CLAUDE.md) for detailed project structure and [xcode-build-deploy.md](xcode-build-deploy.md) for the full build & deploy guide.
 
 ## License
