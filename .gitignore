@@ -20,7 +20,7 @@ build/
 .env
 
 # Downloaded models (large, not for git)
-models/
+/models/
 
 # Swift Package Manager
 .build/
