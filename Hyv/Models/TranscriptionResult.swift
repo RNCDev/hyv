@@ -10,4 +10,5 @@ struct TranscriptionResult: Codable {
     }
     let segments: [Segment]
     let speakers: [String]
+    let empty: Bool?
 }

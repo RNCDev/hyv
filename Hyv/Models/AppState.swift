@@ -136,9 +136,11 @@ final class AppState: ObservableObject {
         transcriptLines = []
         currentTranscriptPath = nil
 
-        // Use any running meeting app for transcript labeling (including background apps)
+        // Only label with auto-detected meeting apps, not background-running ones
         if detectedApp == nil {
-            detectedApp = meetingDetector.runningMeetingApp?.displayName
+            if let app = meetingDetector.runningMeetingApp, !app.runsInBackground {
+                detectedApp = app.displayName
+            }
         }
 
         // Create fresh recorder
@@ -181,7 +183,33 @@ final class AppState: ObservableObject {
 
     // MARK: - Post-Processing
 
+    private func audioHasSpeech(at url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url), data.count > 44 else { return false }
+        let pcm = data.advanced(by: 44)
+        let sampleCount = pcm.count / 2
+        guard sampleCount > 0 else { return false }
+
+        var sumSquares: Double = 0
+        pcm.withUnsafeBytes { buffer in
+            let int16s = buffer.bindMemory(to: Int16.self)
+            for i in 0..<sampleCount {
+                let normalized = Double(int16s[i]) / 32768.0
+                sumSquares += normalized * normalized
+            }
+        }
+        let rms = (sumSquares / Double(sampleCount)).squareRoot()
+        return rms > 0.003
+    }
+
     private func processRecording(audioURL: URL) {
+        // Quick check: skip Python pipeline if audio is silent
+        guard audioHasSpeech(at: audioURL) else {
+            self.status = .error("Recording contained no speech audio")
+            try? FileManager.default.removeItem(at: audioURL)
+            self.recordingStartTime = nil
+            return
+        }
+
         processingTask = Task {
             do {
                 let result = try await diarizationService.process(
@@ -192,6 +220,14 @@ final class AppState: ObservableObject {
                         }
                     }
                 )
+
+                // Handle empty result (no speech detected)
+                if result.segments.isEmpty {
+                    self.status = .error("No speech detected in recording")
+                    try? FileManager.default.removeItem(at: audioURL)
+                    self.recordingStartTime = nil
+                    return
+                }
 
                 // Calculate duration from last segment
                 let duration = result.segments.last.map { $0.end } ?? 0

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse, json, sys, os, time, tempfile, threading
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import soundfile as sf
 import numpy as np
@@ -75,6 +76,54 @@ def transcribe_segment_local(audio_data, sample_rate, model, processor, language
         return texts[0].strip() if texts else ""
     except Exception as e:
         return f"[transcription failed: {str(e)}]"
+
+def is_speech_segment(audio_data, sample_rate, rms_threshold=0.005):
+    """Return False if segment is likely silence or noise, not speech."""
+    if len(audio_data) == 0:
+        return False
+    rms = np.sqrt(np.mean(audio_data ** 2))
+    if rms < rms_threshold:
+        return False
+    # Very low energy + high zero-crossing rate = noise, not speech
+    if rms < 0.01:
+        zero_crossings = np.sum(np.abs(np.diff(np.sign(audio_data))) > 0)
+        zcr = zero_crossings / len(audio_data)
+        if zcr > 0.3:
+            return False
+    return True
+
+def is_garbage_transcription(text):
+    """Detect ASR hallucination: multilingual word salad or excessive repetition."""
+    if not text or len(text.strip()) < 3:
+        return True
+
+    # Check Unicode script diversity — real speech uses 1-2 scripts
+    categories = Counter()
+    for ch in text:
+        if ch.isalpha():
+            cp = ord(ch)
+            if cp < 0x0080: categories['latin'] += 1
+            elif cp < 0x0530: categories['european'] += 1
+            elif 0x0600 <= cp < 0x0700: categories['arabic'] += 1
+            elif 0x3040 <= cp < 0x3100: categories['japanese'] += 1
+            elif 0x4E00 <= cp < 0x9FFF: categories['cjk'] += 1
+            elif 0xAC00 <= cp < 0xD7AF: categories['korean'] += 1
+            elif 0x0370 <= cp < 0x0400: categories['greek'] += 1
+            elif 0x0400 <= cp < 0x0530: categories['cyrillic'] += 1
+            elif 0x0900 <= cp < 0x0980: categories['devanagari'] += 1
+            else: categories['other'] += 1
+    if len(categories) >= 4:
+        return True
+
+    # Check excessive word repetition
+    words = text.lower().split()
+    if len(words) >= 4:
+        word_counts = Counter(words)
+        most_common_count = word_counts.most_common(1)[0][1]
+        if most_common_count / len(words) > 0.5:
+            return True
+
+    return False
 
 def format_time(seconds):
     """Format seconds as MM:SS or H:MM:SS"""
@@ -157,16 +206,32 @@ def main():
             merged_segments.append(dict(seg))
     raw_segments = merged_segments
 
-    total = len(raw_segments)
-    speakers = sorted(set(s["speaker"] for s in raw_segments))
-    progress(0, total, f"Diarization complete. Found {len(speakers)} speakers, {total} segments.")
+    progress(0, 0, f"Diarization complete. Found {len(raw_segments)} segments.")
 
-    # Prepare segment audio data
+    # Prepare segment audio data, filtering silent segments
     prepared = []
+    skipped_silent = 0
     for seg in raw_segments:
         start_sample = int(seg["start"] * sample_rate)
         end_sample = int(seg["end"] * sample_rate)
-        prepared.append((seg, audio_data[start_sample:end_sample]))
+        segment_audio = audio_data[start_sample:end_sample]
+        if is_speech_segment(segment_audio, sample_rate):
+            prepared.append((seg, segment_audio))
+        else:
+            skipped_silent += 1
+
+    if skipped_silent:
+        progress(0, 0, f"Skipped {skipped_silent} silent segments")
+
+    total = len(prepared)
+    speakers = sorted(set(s[0]["speaker"] for s in prepared)) if prepared else []
+
+    if total == 0:
+        progress(0, 0, "No speech detected in audio")
+        json.dump({"segments": [], "speakers": [], "empty": True}, sys.stdout)
+        sys.exit(0)
+
+    progress(0, total, f"Transcribing {total} speech segments from {len(speakers)} speakers")
 
     # Transcribe segments
     results = [None] * total
@@ -177,7 +242,7 @@ def main():
         for i, (seg, segment_audio) in enumerate(prepared):
             progress(i + 1, total, f"Transcribing {seg['speaker']} [{format_time(seg['start'])}-{format_time(seg['end'])}]")
             text = transcribe_segment_local(segment_audio, sample_rate, model, processor, args.language)
-            if text and not text.startswith("[transcription failed"):
+            if text and not text.startswith("[transcription failed") and not is_garbage_transcription(text):
                 results[i] = {
                     "start": round(seg["start"], 2),
                     "end": round(seg["end"], 2),
@@ -203,7 +268,7 @@ def main():
             ]
             for future in as_completed(futures):
                 idx, seg, text = future.result()
-                if text and not text.startswith("[transcription failed"):
+                if text and not text.startswith("[transcription failed") and not is_garbage_transcription(text):
                     results[idx] = {
                         "start": round(seg["start"], 2),
                         "end": round(seg["end"], 2),
