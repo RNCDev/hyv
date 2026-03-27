@@ -69,6 +69,28 @@ final class AppState: ObservableObject {
             cohereKey: config.cohereApiKey
         )
         setupTerminationHandler()
+        preloadModel()
+    }
+
+    // MARK: - Model Preloading
+
+    private func preloadModel() {
+        guard AppConfig.shared.hasValidHFToken else { return }
+        status = .processing("Loading diarization model...")
+        Task {
+            do {
+                try await diarizationService.start { [weak self] message in
+                    Task { @MainActor in
+                        self?.status = .processing(message)
+                    }
+                }
+                self.status = .idle
+                logger.info("Model preloaded — ready for recording")
+            } catch {
+                logger.error("Model preload failed: \(error.localizedDescription)")
+                self.status = .idle // Don't block the app — model will load on first request
+            }
+        }
     }
 
     // MARK: - Recording Control
@@ -245,6 +267,7 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 self?.processingTask?.cancel()
                 self?.fileWriter.close()
+                self?.diarizationService.stop()
             }
         }
     }

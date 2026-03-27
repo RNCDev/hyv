@@ -1,16 +1,32 @@
 #!/usr/bin/env python3
 """
-Stereo channel-separated transcription pipeline.
+Long-running transcription server.
 
-Input: stereo WAV (ch0 = system/remote audio, ch1 = microphone/you)
-Pipeline:
-  1. Split stereo into two mono channels
-  2. Mic channel (ch1): find speech segments via energy-based VAD, transcribe each → label "Me"
-  3. System channel (ch0): run pyannote diarization to separate remote speakers,
-     transcribe each segment → label "Remote" or "Remote (SPEAKER_XX)" if multiple
-  4. Merge all segments by timestamp, output JSON
+Protocol: reads JSON requests from stdin (one per line), writes JSON responses to stdout (one per line).
+Progress updates go to stderr as PROGRESS:<current>/<total>:<message>.
+
+On startup, loads the pyannote diarization model once and keeps it in memory.
+Sends READY on stderr when model is loaded and server is accepting requests.
+
+Request format:
+{
+  "audio": "/path/to/stereo.wav",
+  "cohere_key": "...",
+  "language": "en",
+  "min_speakers": 1,
+  "max_speakers": 10
+}
+
+Response format (same as before):
+{
+  "segments": [{"start": 0.0, "end": 1.5, "speaker": "Me", "text": "..."}],
+  "speakers": ["Me", "Remote"]
+}
+
+Or on error:
+{"error": "message"}
 """
-import argparse, json, sys, os, time, tempfile, threading
+import json, sys, os, time, tempfile, threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import soundfile as sf
 import numpy as np
@@ -18,12 +34,10 @@ import requests
 
 
 def progress(current, total, message):
-    """Report progress on stderr for Swift app to parse"""
     print(f"PROGRESS:{current}/{total}:{message}", file=sys.stderr, flush=True)
 
 
 def transcribe_segment(audio_data, sample_rate, cohere_key, language, max_retries=3):
-    """Send audio segment to Cohere API, return transcribed text"""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         sf.write(f.name, audio_data, sample_rate)
         temp_path = f.name
@@ -62,7 +76,6 @@ def transcribe_segment(audio_data, sample_rate, cohere_key, language, max_retrie
 
 
 def format_time(seconds):
-    """Format seconds as MM:SS or H:MM:SS"""
     h = int(seconds) // 3600
     m = (int(seconds) % 3600) // 60
     s = int(seconds) % 60
@@ -71,12 +84,7 @@ def format_time(seconds):
     return f"{m:02d}:{s:02d}"
 
 
-def find_speech_segments(audio_mono, sample_rate, min_duration=0.3, energy_threshold=0.005, merge_gap=1.0):
-    """
-    Energy-based VAD: find contiguous regions above an energy threshold.
-    Returns list of {"start": float, "end": float} in seconds.
-    """
-    # Compute energy in 30ms frames
+def find_speech_segments(audio_mono, sample_rate, min_duration=0.3, energy_threshold=0.002, merge_gap=1.0):
     frame_len = int(sample_rate * 0.03)
     hop = frame_len
     n_frames = len(audio_mono) // hop
@@ -98,13 +106,11 @@ def find_speech_segments(audio_mono, sample_rate, min_duration=0.3, energy_thres
             if t - start >= min_duration:
                 segments.append({"start": start, "end": t})
 
-    # Close final segment
     if in_speech:
         end = len(audio_mono) / sample_rate
         if end - start >= min_duration:
             segments.append({"start": start, "end": end})
 
-    # Merge segments with small gaps
     merged = []
     for seg in segments:
         if merged and seg["start"] - merged[-1]["end"] < merge_gap:
@@ -115,25 +121,13 @@ def find_speech_segments(audio_mono, sample_rate, min_duration=0.3, energy_thres
     return merged
 
 
-def diarize_system_channel(audio_mono, sample_rate, audio_path_for_pyannote, hf_token, min_speakers=1, max_speakers=10):
-    """
-    Run pyannote diarization on the system audio channel.
-    Writes a temp mono WAV for pyannote, returns list of segments with speaker labels.
-    """
-    from pyannote.audio import Pipeline
-
-    # Write mono system audio to temp file for pyannote
+def diarize_system_channel(pipeline, audio_mono, sample_rate, min_speakers=1, max_speakers=10):
+    """Run pyannote diarization using the pre-loaded pipeline."""
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         sf.write(f.name, audio_mono, sample_rate)
         temp_path = f.name
 
     try:
-        progress(0, 0, "Loading diarization model...")
-        pipeline = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization-3.1",
-            token=hf_token
-        )
-
         progress(0, 0, "Diarizing remote speakers...")
         diarization = pipeline(
             temp_path,
@@ -152,7 +146,6 @@ def diarize_system_channel(audio_mono, sample_rate, audio_path_for_pyannote, hf_
                 "speaker": speaker
             })
 
-        # Merge adjacent segments from same speaker
         merged = []
         for seg in raw_segments:
             if merged and merged[-1]["speaker"] == seg["speaker"] and seg["start"] - merged[-1]["end"] < 1.5:
@@ -165,45 +158,40 @@ def diarize_system_channel(audio_mono, sample_rate, audio_path_for_pyannote, hf_
         os.unlink(temp_path)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Stereo channel-separated transcription")
-    parser.add_argument("--audio", required=True, help="Path to stereo WAV file (ch0=system, ch1=mic)")
-    parser.add_argument("--hf-token", required=True, help="HuggingFace token for pyannote")
-    parser.add_argument("--cohere-key", required=True, help="Cohere API key")
-    parser.add_argument("--language", default="en", help="Language code (ISO 639-1)")
-    parser.add_argument("--min-speakers", type=int, default=1)
-    parser.add_argument("--max-speakers", type=int, default=10)
-    args = parser.parse_args()
+def process_request(pipeline, req):
+    """Process a single transcription request. Returns a dict (JSON-serializable)."""
+    audio_path = req["audio"]
+    cohere_key = req["cohere_key"]
+    language = req.get("language", "en")
+    min_speakers = req.get("min_speakers", 1)
+    max_speakers = req.get("max_speakers", 10)
 
-    if not os.path.exists(args.audio):
-        json.dump({"error": f"Audio file not found: {args.audio}"}, sys.stdout)
-        sys.exit(1)
+    if not os.path.exists(audio_path):
+        return {"error": f"Audio file not found: {audio_path}"}
 
     # Load stereo audio
     progress(0, 0, "Loading audio...")
-    audio_data, sample_rate = sf.read(args.audio)
+    audio_data, sample_rate = sf.read(audio_path)
 
     if len(audio_data.shape) == 1:
-        # Mono file — treat as system-only (legacy/fallback)
         system_audio = audio_data
         mic_audio = np.zeros_like(audio_data)
         progress(0, 0, "Mono input detected — treating as system audio only")
     else:
-        system_audio = audio_data[:, 0]  # ch0 = remote
-        mic_audio = audio_data[:, 1]     # ch1 = you
+        system_audio = audio_data[:, 0]
+        mic_audio = audio_data[:, 1]
 
     duration = len(system_audio) / sample_rate
     progress(0, 0, f"Audio loaded: {format_time(duration)} duration, {audio_data.shape[-1] if len(audio_data.shape) > 1 else 1} channels")
 
-    # Check which channels have audio
     sys_has_audio = np.sqrt(np.mean(system_audio ** 2)) > 0.001
     mic_has_audio = np.sqrt(np.mean(mic_audio ** 2)) > 0.001
     progress(0, 0, f"System audio: {'yes' if sys_has_audio else 'silent'}, Mic audio: {'yes' if mic_has_audio else 'silent'}")
 
-    all_segments = []  # Will collect {"start", "end", "speaker", "audio_data"}
+    all_segments = []
     speakers = set()
 
-    # --- Mic channel: energy-based VAD + direct transcription ---
+    # Mic channel: energy-based VAD
     if mic_has_audio:
         progress(0, 0, "Finding speech in mic channel...")
         mic_segments = find_speech_segments(mic_audio, sample_rate)
@@ -221,15 +209,13 @@ def main():
         if mic_segments:
             speakers.add("Me")
 
-    # --- System channel: pyannote diarization ---
+    # System channel: pyannote diarization
     if sys_has_audio:
         progress(0, 0, "Processing system audio (remote speakers)...")
         sys_segments = diarize_system_channel(
-            system_audio, sample_rate, args.audio,
-            args.hf_token, args.min_speakers, args.max_speakers
+            pipeline, system_audio, sample_rate, min_speakers, max_speakers
         )
 
-        # Determine speaker labels
         unique_remote = sorted(set(s["speaker"] for s in sys_segments))
         if len(unique_remote) == 1:
             speaker_map = {unique_remote[0]: "Remote"}
@@ -250,24 +236,21 @@ def main():
             })
             speakers.add(label)
 
-    # Sort all segments by start time
     all_segments.sort(key=lambda s: s["start"])
 
     total = len(all_segments)
     if total == 0:
         progress(0, 0, "No speech detected in either channel")
-        json.dump({"segments": [], "speakers": []}, sys.stdout)
-        return
+        return {"segments": [], "speakers": []}
 
     progress(0, total, f"Transcribing {total} segments across {len(speakers)} speaker(s)...")
 
-    # Transcribe all segments in parallel
     results = [None] * total
     completed_count = [0]
     lock = threading.Lock()
 
     def transcribe_worker(index, seg):
-        text = transcribe_segment(seg["audio_data"], sample_rate, args.cohere_key, args.language)
+        text = transcribe_segment(seg["audio_data"], sample_rate, cohere_key, language)
         with lock:
             completed_count[0] += 1
             progress(completed_count[0], total, f"Transcribed {completed_count[0]}/{total} segments")
@@ -291,16 +274,49 @@ def main():
     results = [r for r in results if r is not None]
     progress(total, total, "Done")
 
-    output = {
+    return {
         "segments": results,
         "speakers": sorted(speakers)
     }
-    json.dump(output, sys.stdout, ensure_ascii=False, indent=2)
+
+
+def main():
+    from pyannote.audio import Pipeline
+
+    hf_token = os.environ.get("HF_TOKEN", "")
+
+    # Load model once at startup
+    progress(0, 0, "Loading diarization model (one-time)...")
+    pipeline = Pipeline.from_pretrained(
+        "pyannote/speaker-diarization-3.1",
+        token=hf_token
+    )
+    print("READY", file=sys.stderr, flush=True)
+
+    # Read requests from stdin, one JSON per line
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+
+        try:
+            req = json.loads(line)
+        except json.JSONDecodeError as e:
+            response = {"error": f"Invalid JSON: {e}"}
+            print(json.dumps(response), flush=True)
+            continue
+
+        try:
+            response = process_request(pipeline, req)
+        except Exception as e:
+            response = {"error": str(e)}
+
+        print(json.dumps(response, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        json.dump({"error": str(e)}, sys.stdout)
+        json.dump({"error": str(e)}, sys.stdout, flush=True)
         sys.exit(1)
