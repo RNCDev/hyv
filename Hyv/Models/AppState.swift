@@ -38,6 +38,7 @@ final class AppState: ObservableObject {
     private let fileWriter = TranscriptFileWriter()
 
     // Pipeline
+    private var recordingStartTask: Task<Void, Never>?
     private var processingTask: Task<Void, Never>?
     private var detectorCancellable: AnyCancellable?
     private var meetingGoneTimer: Task<Void, Never>?
@@ -160,13 +161,15 @@ final class AppState: ObservableObject {
         recorder = AudioFileRecorder()
         audioCaptureService = AudioCaptureService(recorder: recorder)
 
-        Task {
+        recordingStartTask = Task {
             do {
                 let audioURL = try await recorder.startRecording()
                 self.currentRecordingURL = audioURL
                 try await audioCaptureService.startCapture()
             } catch {
-                self.status = .error("Recording failed: \(error.localizedDescription)")
+                if !Task.isCancelled {
+                    self.status = .error("Recording failed: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -175,6 +178,13 @@ final class AppState: ObservableObject {
         guard status == .recording else { return }
 
         Task {
+            // Wait for startup to finish (or cancel it) before tearing down
+            if let startTask = recordingStartTask {
+                startTask.cancel()
+                await startTask.value
+                recordingStartTask = nil
+            }
+
             // Stop capture
             await audioCaptureService.stopCapture()
             try? await recorder.stopRecording()
