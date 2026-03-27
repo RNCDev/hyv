@@ -1,5 +1,13 @@
 import Foundation
 
+enum AppConstants {
+    static let meetingDetectionPollInterval: TimeInterval = 30
+    static let meetingGoneTimeout: UInt64 = 10_000_000_000 // 10 seconds in nanoseconds
+    static let meetingDebounceDelay: UInt64 = 5_000_000_000 // 5 seconds in nanoseconds
+    static let speechRMSThreshold: Double = 0.003
+    static let processTimeoutMinutes: Int = 45
+}
+
 struct AppConfig {
     let cohereApiKey: String
     let huggingFaceToken: String

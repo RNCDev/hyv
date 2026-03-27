@@ -88,10 +88,33 @@ final class DiarizationService: @unchecked Sendable {
                     return
                 }
 
+                // Schedule a 45-minute timeout to kill the process
+                var didTimeout = false
+                let timeoutWork = DispatchWorkItem {
+                    didTimeout = true
+                    process.terminate()
+                    // Give it a moment to terminate gracefully, then force kill
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 5) {
+                        if process.isRunning {
+                            kill(process.processIdentifier, SIGKILL)
+                        }
+                    }
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 45 * 60, execute: timeoutWork)
+
                 process.waitUntilExit()
+
+                // Cancel the timeout since the process finished
+                timeoutWork.cancel()
 
                 // Clean up handler
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
+
+                // Check if we timed out
+                if didTimeout {
+                    continuation.resume(throwing: DiarizationError.timeout)
+                    return
+                }
 
                 let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                 let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
@@ -136,6 +159,7 @@ enum DiarizationError: LocalizedError {
     case scriptNotFound(String)
     case processFailed(Int32, String)
     case invalidOutput(String)
+    case timeout
 
     var errorDescription: String? {
         switch self {
@@ -147,6 +171,8 @@ enum DiarizationError: LocalizedError {
             return "Processing failed (exit \(code)): \(msg)"
         case .invalidOutput(let detail):
             return "Invalid script output: \(detail)"
+        case .timeout:
+            return "Processing timed out after 45 minutes"
         }
     }
 }

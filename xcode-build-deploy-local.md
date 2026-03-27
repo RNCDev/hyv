@@ -149,19 +149,22 @@ The model needs ~4GB RAM. If you're running other heavy apps:
 - Expected: ~1-3 seconds per segment on M1/M2/M3
 
 ### Want to fall back to API mode
-Edit `Hyv/Services/DiarizationService.swift` and remove `"--local"` from the arguments array. Rebuild.
+Set `COHERE_TRIAL_API_KEY` in `.env` and remove `"--local"` from the arguments array in `Hyv/Services/DiarizationService.swift`. Rebuild. Note: the Python subprocess has a 45-minute timeout — if inference stalls, the app will kill the process and report an error.
 
 ---
 
 ## Architecture Notes
 
 ```
-Recording:    AudioCaptureService → AudioFileRecorder (WAV to disk)
-Processing:   Python script:
+Recording:    AudioCaptureService (thread-safe, NSLock) → AudioFileRecorder (actor, WAV to disk)
+Processing:   Python script (45-minute timeout):
               1. pyannote diarization (speaker detection)
               2. Load CohereLabs/cohere-transcribe-03-2026 locally
               3. Transcribe each segment on-device via MPS
               4. Output JSON → TranscriptFileWriter
+Detection:    NSWorkspace notifications + 30s safety poll (with 5s debounce)
 ```
 
 The local model is loaded once and reused for all segments. Transcription is sequential (GPU inference isn't safely concurrent), but each segment is fast on Apple Silicon.
+
+Meeting detection uses `NSWorkspace.didActivateApplicationNotification` and `NSWorkspace.didTerminateApplicationNotification` instead of frequent polling. A 5-second debounce prevents rapid state transitions when switching windows. Audio speech detection streams the WAV file in 64KB chunks to avoid loading large recordings into memory.

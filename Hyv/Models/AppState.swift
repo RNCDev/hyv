@@ -41,6 +41,7 @@ final class AppState: ObservableObject {
     private var processingTask: Task<Void, Never>?
     private var detectorCancellable: AnyCancellable?
     private var meetingGoneTimer: Task<Void, Never>?
+    private var meetingDebounceTask: Task<Void, Never>?
     private var currentRecordingURL: URL?
 
     var menuBarIcon: String {
@@ -89,18 +90,30 @@ final class AppState: ObservableObject {
                 if let app = app {
                     self.detectedApp = app.displayName
                     if self.status == .idle {
-                        self.status = .meetingDetected
+                        self.meetingDebounceTask?.cancel()
+                        self.meetingDebounceTask = Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: AppConstants.meetingDebounceDelay)
+                            guard !Task.isCancelled else { return }
+                            if self?.status == .idle {
+                                self?.status = .meetingDetected
+                            }
+                        }
+                    } else {
+                        self.meetingDebounceTask?.cancel()
+                        self.meetingDebounceTask = nil
                     }
                     self.meetingGoneTimer?.cancel()
                     self.meetingGoneTimer = nil
                 } else {
+                    self.meetingDebounceTask?.cancel()
+                    self.meetingDebounceTask = nil
                     if self.status == .meetingDetected {
                         self.status = .idle
                         self.detectedApp = nil
                     } else if self.status == .recording {
                         self.meetingGoneTimer?.cancel()
                         self.meetingGoneTimer = Task { @MainActor [weak self] in
-                            try? await Task.sleep(nanoseconds: 10_000_000_000)
+                            try? await Task.sleep(nanoseconds: AppConstants.meetingGoneTimeout)
                             guard !Task.isCancelled else { return }
                             self?.stopRecording()
                         }
@@ -184,21 +197,33 @@ final class AppState: ObservableObject {
     // MARK: - Post-Processing
 
     private func audioHasSpeech(at url: URL) -> Bool {
-        guard let data = try? Data(contentsOf: url), data.count > 44 else { return false }
-        let pcm = data.advanced(by: 44)
-        let sampleCount = pcm.count / 2
-        guard sampleCount > 0 else { return false }
+        guard let fileHandle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? fileHandle.close() }
 
+        // Check file is larger than WAV header
+        guard let endOffset = try? fileHandle.seekToEnd(), endOffset > 44 else { return false }
+
+        // Seek past the 44-byte WAV header
+        try? fileHandle.seek(toOffset: 44)
+
+        let chunkSize = 65536 // 64KB
         var sumSquares: Double = 0
-        pcm.withUnsafeBytes { buffer in
-            let int16s = buffer.bindMemory(to: Int16.self)
-            for i in 0..<sampleCount {
-                let normalized = Double(int16s[i]) / 32768.0
-                sumSquares += normalized * normalized
+        var sampleCount: Int = 0
+
+        while let chunk = try? fileHandle.read(upToCount: chunkSize), !chunk.isEmpty {
+            chunk.withUnsafeBytes { buffer in
+                let int16s = buffer.bindMemory(to: Int16.self)
+                for i in 0..<int16s.count {
+                    let normalized = Double(int16s[i]) / 32768.0
+                    sumSquares += normalized * normalized
+                }
+                sampleCount += int16s.count
             }
         }
+
+        guard sampleCount > 0 else { return false }
         let rms = (sumSquares / Double(sampleCount)).squareRoot()
-        return rms > 0.003
+        return rms > AppConstants.speechRMSThreshold
     }
 
     private func processRecording(audioURL: URL) {
@@ -247,7 +272,7 @@ final class AppState: ObservableObject {
                         speaker: segment.speaker,
                         timestamp: segment.start
                     )
-                    let timeStr = self.formatElapsed(segment.start)
+                    let timeStr = TimeFormatting.formatElapsed(segment.start)
                     self.transcriptLines.append("[\(timeStr)] \(segment.speaker): \(segment.text)")
                 }
 
@@ -289,18 +314,6 @@ final class AppState: ObservableObject {
     func openTranscript() {
         guard let path = currentTranscriptPath else { return }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
-    }
-
-    // MARK: - Helpers
-
-    private func formatElapsed(_ interval: TimeInterval) -> String {
-        let hours = Int(interval) / 3600
-        let minutes = (Int(interval) % 3600) / 60
-        let seconds = Int(interval) % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
     }
 
     // MARK: - Cleanup

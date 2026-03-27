@@ -8,14 +8,14 @@ A macOS menu bar app (like Granola) that auto-detects multi-party meetings, reco
 - **Target:** macOS 14.0+, Apple Silicon
 - **Audio capture:** ScreenCaptureKit (system audio, 16kHz mono)
 - **Speaker diarization:** pyannote.audio 3.1 (via Python subprocess)
-- **Transcription:** Cohere Transcribe API (per-segment, after diarization)
+- **Transcription:** Local Cohere Transcribe model (PyTorch + MPS) or Cohere API fallback
 - **Build system:** XcodeGen (`project.yml` → `xcodegen generate` → `Hyv.xcodeproj`)
 - **No App Sandbox** — ScreenCaptureKit requires screen recording permission
 
 ## Architecture
 ```
 During meeting:  AudioCaptureService → AudioFileRecorder (full WAV to disk)
-After meeting:   Python script (pyannote diarization → per-segment Cohere API) → TranscriptFileWriter
+After meeting:   Python script (pyannote diarization → local model or Cohere API) → TranscriptFileWriter
 ```
 
 1. Record full meeting audio to `~/Library/Application Support/Hyv/recordings/`
@@ -34,23 +34,21 @@ hyv/
 └── Hyv/
     ├── HyvApp.swift                  # @main, MenuBarExtra entry point
     ├── Hyv.entitlements              # No sandbox for MVP
-    ├── Config/AppConfig.swift        # Loads API keys, detects Python path
+    ├── Config/AppConfig.swift        # Loads API keys, detects Python path, AppConstants
     ├── Models/
     │   ├── AppState.swift            # Central orchestrator, owns all services
     │   ├── MeetingApp.swift          # Enum of meeting app bundle IDs
-    │   ├── TranscriptSegment.swift   # Legacy timestamped segment
     │   └── TranscriptionResult.swift # Codable result from Python script
     ├── Services/
-    │   ├── MeetingDetectorService.swift    # Polls NSWorkspace every 3s
-    │   ├── AudioCaptureService.swift       # SCStream wrapper → AudioFileRecorder
-    │   ├── AudioFileRecorder.swift         # Writes PCM to WAV file on disk
-    │   ├── DiarizationService.swift        # Swift ↔ Python subprocess bridge
-    │   ├── CohereTranscriptionService.swift # REST client (retained for future use)
+    │   ├── MeetingDetectorService.swift    # NSWorkspace notifications + 30s safety poll
+    │   ├── AudioCaptureService.swift       # SCStream wrapper → AudioFileRecorder (thread-safe)
+    │   ├── AudioFileRecorder.swift         # Actor-based PCM → WAV file writer
+    │   ├── DiarizationService.swift        # Swift ↔ Python subprocess bridge (45min timeout)
+    │   ├── CohereTranscriptionService.swift # REST client (API fallback)
     │   └── TranscriptFileWriter.swift      # Speaker-labeled FileHandle append
-    ├── Views/MenuBarView.swift       # Status, controls, transcript preview
+    ├── Views/MenuBarView.swift       # Status, controls, async transcript list
     └── Utilities/
-        ├── WAVEncoder.swift          # 44-byte RIFF header + PCM
-        └── ProcessUtils.swift        # NSWorkspace running app helpers
+        └── ProcessUtils.swift        # NSWorkspace helpers, TimeFormatting
 ```
 
 ## Build & Run
@@ -71,10 +69,10 @@ open build/Debug/Hyv.app
 ```
 
 ## Environment
-- `COHERE_TRIAL_API_KEY` — Cohere API key (in `.env`)
-- `HF_TOKEN` — HuggingFace token for pyannote gated model (in `.env`)
+- `COHERE_TRIAL_API_KEY` — Cohere API key, optional if using `--local` mode (in `.env`)
+- `HF_TOKEN` — HuggingFace token for pyannote gated model + Cohere Transcribe model (in `.env`)
 - Screen Recording permission required at first launch
-- Python 3.10+ with pyannote.audio, torch, soundfile, numpy, requests
+- Python 3.10+ with pyannote.audio, torch, transformers, accelerate, soundfile, numpy, requests
 
 ## Design Principles
 - **Accuracy over speed** — batch post-processing, not real-time streaming

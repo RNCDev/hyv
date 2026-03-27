@@ -4,13 +4,13 @@ A macOS menu bar app that auto-detects multi-party meetings, records system audi
 
 ## How it works
 
-1. **Detects meetings** — polls for running meeting apps (Zoom, Teams, FaceTime, WhatsApp, Webex, Slack)
+1. **Detects meetings** — watches for running meeting apps via NSWorkspace notifications (Zoom, Teams, FaceTime, WhatsApp, Webex, Slack)
 2. **Records system audio** — captures via ScreenCaptureKit to a WAV file
 3. **Diarizes speakers** — runs pyannote.audio to identify who spoke when
-4. **Transcribes segments** — sends each speaker segment to the Cohere Transcribe API
+4. **Transcribes segments** — runs Cohere Transcribe locally on-device (PyTorch + Apple Metal), or falls back to Cohere API
 5. **Writes transcript** — outputs a speaker-labeled `.txt` file to your Desktop
 
-Processing happens after the meeting ends. Accuracy over speed — a 30-minute meeting takes roughly 30 minutes to process.
+Processing happens after the meeting ends. Accuracy over speed — local inference runs ~1-3s per segment on Apple Silicon.
 
 ## Requirements
 
@@ -19,8 +19,8 @@ Processing happens after the meeting ends. Accuracy over speed — a 30-minute m
 - Python 3.10+
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 - [FFmpeg](https://ffmpeg.org/) (`brew install ffmpeg`)
-- [Cohere API key](https://dashboard.cohere.com/api-keys)
 - [HuggingFace token](https://huggingface.co/settings/tokens) with access to pyannote gated models
+- [Cohere API key](https://dashboard.cohere.com/api-keys) (optional — only needed for API fallback mode)
 
 ## Setup
 
@@ -98,10 +98,10 @@ Speakers: 2
 
 ```
 During meeting:  AudioCaptureService → AudioFileRecorder (WAV to disk)
-After meeting:   Python (pyannote diarization → Cohere API) → TranscriptFileWriter
+After meeting:   Python (pyannote diarization → local model or Cohere API) → TranscriptFileWriter
 ```
 
-See [CLAUDE.md](CLAUDE.md) for detailed project structure and [xcode-build-deploy.md](xcode-build-deploy.md) for the full build & deploy guide.
+See [CLAUDE.md](CLAUDE.md) for detailed project structure and [xcode-build-deploy-local.md](xcode-build-deploy-local.md) for the local inference build guide.
 
 ## License
 

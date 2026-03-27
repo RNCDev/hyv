@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
+    @State private var recentTranscripts: [URL] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -121,6 +122,9 @@ struct MenuBarView: View {
         }
         .padding()
         .frame(width: 320)
+        .task {
+            recentTranscripts = await loadRecentTranscripts()
+        }
     }
 
     private var canStartRecording: Bool {
@@ -137,23 +141,29 @@ struct MenuBarView: View {
         }
     }
 
-    private var recentTranscripts: [URL] {
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: desktop,
-            includingPropertiesForKeys: [.contentModificationDateKey],
-            options: .skipsHiddenFiles
-        )) ?? []
+    private func loadRecentTranscripts() async -> [URL] {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first!
+                let files = (try? FileManager.default.contentsOfDirectory(
+                    at: desktop,
+                    includingPropertiesForKeys: [.contentModificationDateKey],
+                    options: .skipsHiddenFiles
+                )) ?? []
 
-        return files
-            .filter { $0.lastPathComponent.hasPrefix("Hyv_Transcript_") && $0.pathExtension == "txt" }
-            .sorted {
-                let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-                return d1 > d2
+                let result = files
+                    .filter { $0.lastPathComponent.hasPrefix("Hyv_Transcript_") && $0.pathExtension == "txt" }
+                    .sorted {
+                        let d1 = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                        let d2 = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                        return d1 > d2
+                    }
+                    .prefix(5)
+                    .map { $0 }
+
+                continuation.resume(returning: result)
             }
-            .prefix(5)
-            .map { $0 }
+        }
     }
 
     private var statusColor: Color {

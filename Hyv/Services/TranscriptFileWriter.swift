@@ -23,7 +23,7 @@ final class TranscriptFileWriter {
             header += "Meeting: \(app)\n"
         }
         if let dur = duration {
-            header += "Duration: \(formatElapsed(dur))\n"
+            header += "Duration: \(TimeFormatting.formatElapsed(dur))\n"
         }
         if let count = speakerCount {
             header += "Speakers: \(count)\n"
@@ -38,7 +38,7 @@ final class TranscriptFileWriter {
     func appendSegment(_ text: String, speaker: String, timestamp: TimeInterval) {
         guard let fileHandle = fileHandle else { return }
 
-        let timeString = formatElapsed(timestamp)
+        let timeString = TimeFormatting.formatElapsed(timestamp)
         let line = "[\(timeString)] \(speaker): \(text)\n"
 
         fileHandle.seekToEndOfFile()
@@ -52,7 +52,7 @@ final class TranscriptFileWriter {
     func appendSegment(_ text: String, timestamp: TimeInterval) {
         guard let fileHandle = fileHandle else { return }
 
-        let timeString = formatElapsed(timestamp)
+        let timeString = TimeFormatting.formatElapsed(timestamp)
         let line = "[\(timeString)] \(text)\n"
 
         fileHandle.seekToEndOfFile()
@@ -73,15 +73,5 @@ final class TranscriptFileWriter {
         fileHandle.closeFile()
 
         self.fileHandle = nil
-    }
-
-    private func formatElapsed(_ interval: TimeInterval) -> String {
-        let hours = Int(interval) / 3600
-        let minutes = (Int(interval) % 3600) / 60
-        let seconds = Int(interval) % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
     }
 }

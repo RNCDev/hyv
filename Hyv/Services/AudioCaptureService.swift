@@ -7,6 +7,7 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
     let recorder: AudioFileRecorder
     private var stream: SCStream?
     private var isCapturing = false
+    private let lock = NSLock()
 
     init(recorder: AudioFileRecorder) {
         self.recorder = recorder
@@ -24,7 +25,10 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
     }
 
     func startCapture() async throws {
-        guard !isCapturing else { return }
+        lock.lock()
+        let alreadyCapturing = isCapturing
+        lock.unlock()
+        guard !alreadyCapturing else { return }
 
         // Get shareable content
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
@@ -52,12 +56,18 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInitiated))
 
         try await stream.startCapture()
+        lock.lock()
         self.stream = stream
         self.isCapturing = true
+        lock.unlock()
     }
 
     func stopCapture() async {
-        guard isCapturing, let stream = stream else { return }
+        lock.lock()
+        let wasCapturing = isCapturing
+        let currentStream = stream
+        lock.unlock()
+        guard wasCapturing, let stream = currentStream else { return }
 
         do {
             try await stream.stopCapture()
@@ -65,8 +75,10 @@ final class AudioCaptureService: NSObject, @unchecked Sendable {
             print("Warning: Error stopping capture: \(error)")
         }
 
+        lock.lock()
         self.stream = nil
         self.isCapturing = false
+        lock.unlock()
     }
 }
 

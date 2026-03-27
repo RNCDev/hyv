@@ -14,18 +14,53 @@ final class MeetingDetectorService: ObservableObject {
     }
 
     private var timerCancellable: AnyCancellable?
+    private var activateObserver: NSObjectProtocol?
+    private var terminateObserver: NSObjectProtocol?
 
     func start() {
-        timerCancellable = Timer.publish(every: 3, on: .main, in: .common)
+        let center = NSWorkspace.shared.notificationCenter
+
+        activateObserver = center.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForMeetings()
+            }
+        }
+
+        terminateObserver = center.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForMeetings()
+            }
+        }
+
+        // Safety-net poll every 30 seconds
+        timerCancellable = Timer.publish(every: AppConstants.meetingDetectionPollInterval, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
                 self?.checkForMeetings()
             }
+
         // Also check immediately
         checkForMeetings()
     }
 
     func stop() {
+        let center = NSWorkspace.shared.notificationCenter
+        if let observer = activateObserver {
+            center.removeObserver(observer)
+            activateObserver = nil
+        }
+        if let observer = terminateObserver {
+            center.removeObserver(observer)
+            terminateObserver = nil
+        }
         timerCancellable?.cancel()
         timerCancellable = nil
         detectedApp = nil
