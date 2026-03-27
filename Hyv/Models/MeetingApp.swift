@@ -17,4 +17,15 @@ enum MeetingApp: String, CaseIterable {
         case .whatsapp: return "WhatsApp"
         }
     }
+
+    /// Apps that run persistently — don't auto-detect as "meeting active"
+    /// They'll still be used to label transcripts when the user manually records
+    var runsInBackground: Bool {
+        switch self {
+        case .teams, .teamsClassic, .slack, .whatsapp:
+            return true
+        case .zoom, .facetime, .webex:
+            return false
+        }
+    }
 }

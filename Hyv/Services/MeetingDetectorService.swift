@@ -7,6 +7,12 @@ final class MeetingDetectorService: ObservableObject {
     @Published var detectedApp: MeetingApp? = nil
     @Published var isMeetingActive: Bool = false
 
+    /// Any meeting app running (including background apps), used for transcript labeling
+    var runningMeetingApp: MeetingApp? {
+        let running = ProcessUtils.runningBundleIdentifiers()
+        return MeetingApp.allCases.first { running.contains($0.rawValue) }
+    }
+
     private var timerCancellable: AnyCancellable?
 
     func start() {
@@ -29,7 +35,8 @@ final class MeetingDetectorService: ObservableObject {
     private func checkForMeetings() {
         let running = ProcessUtils.runningBundleIdentifiers()
 
-        for app in MeetingApp.allCases {
+        // Only auto-detect apps that don't run persistently in the background
+        for app in MeetingApp.allCases where !app.runsInBackground {
             if running.contains(app.rawValue) {
                 detectedApp = app
                 isMeetingActive = true

@@ -106,11 +106,18 @@ struct MenuBarView: View {
 
             Divider()
 
-            // Quit
-            Button("Quit Hyv") {
-                NSApplication.shared.terminate(nil)
+            // Version + Quit
+            HStack {
+                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button("Quit Hyv") {
+                    NSApplication.shared.terminate(nil)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding()
         .frame(width: 320)

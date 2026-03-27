@@ -136,6 +136,11 @@ final class AppState: ObservableObject {
         transcriptLines = []
         currentTranscriptPath = nil
 
+        // Use any running meeting app for transcript labeling (including background apps)
+        if detectedApp == nil {
+            detectedApp = meetingDetector.runningMeetingApp?.displayName
+        }
+
         // Create fresh recorder
         recorder = AudioFileRecorder()
         audioCaptureService = AudioCaptureService(recorder: recorder)
