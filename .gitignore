@@ -19,6 +19,9 @@ build/
 # Environment
 .env
 
+# Downloaded models (large, not for git)
+models/
+
 # Swift Package Manager
 .build/
 .swiftpm/

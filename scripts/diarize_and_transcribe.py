@@ -10,9 +10,8 @@ def progress(current, total, message):
     """Report progress on stderr for Swift app to parse"""
     print(f"PROGRESS:{current}/{total}:{message}", file=sys.stderr, flush=True)
 
-def transcribe_segment(audio_data, sample_rate, cohere_key, language, max_retries=3):
+def transcribe_segment_api(audio_data, sample_rate, cohere_key, language, max_retries=3):
     """Send audio segment to Cohere API, return transcribed text"""
-    # Write segment to temp WAV file
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         sf.write(f.name, audio_data, sample_rate)
         temp_path = f.name
@@ -49,6 +48,34 @@ def transcribe_segment(audio_data, sample_rate, cohere_key, language, max_retrie
     finally:
         os.unlink(temp_path)
 
+def load_local_model(models_dir=None, device="mps"):
+    """Load Cohere Transcribe model for local inference"""
+    import torch
+    from transformers import AutoProcessor, AutoModelForSpeechSeq2Seq
+
+    model_path = os.path.join(models_dir, "cohere-transcribe") if models_dir else "CohereLabs/cohere-transcribe-03-2026"
+    trust_remote = models_dir is None  # only needed when downloading from HF
+
+    progress(0, 0, "Loading local transcription model...")
+    processor = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(model_path, trust_remote_code=True).to(device)
+    model.eval()
+    progress(0, 0, "Local model loaded")
+    return model, processor
+
+def transcribe_segment_local(audio_data, sample_rate, model, processor, language="en"):
+    """Transcribe audio segment using local Cohere model"""
+    try:
+        texts = model.transcribe(
+            processor=processor,
+            audio_arrays=[audio_data.astype(np.float32)],
+            sample_rates=[sample_rate],
+            language=language
+        )
+        return texts[0].strip() if texts else ""
+    except Exception as e:
+        return f"[transcription failed: {str(e)}]"
+
 def format_time(seconds):
     """Format seconds as MM:SS or H:MM:SS"""
     h = int(seconds) // 3600
@@ -62,11 +89,17 @@ def main():
     parser = argparse.ArgumentParser(description="Diarize and transcribe audio")
     parser.add_argument("--audio", required=True, help="Path to WAV file")
     parser.add_argument("--hf-token", required=True, help="HuggingFace token")
-    parser.add_argument("--cohere-key", required=True, help="Cohere API key")
+    parser.add_argument("--cohere-key", default=None, help="Cohere API key (for API mode)")
+    parser.add_argument("--local", action="store_true", help="Use local model instead of API")
+    parser.add_argument("--models-dir", default=None, help="Local models directory (from download_models.py)")
     parser.add_argument("--language", default="en", help="Language code (ISO 639-1)")
     parser.add_argument("--min-speakers", type=int, default=2)
     parser.add_argument("--max-speakers", type=int, default=10)
     args = parser.parse_args()
+
+    if not args.local and not args.cohere_key:
+        json.dump({"error": "Must provide --cohere-key or use --local"}, sys.stdout)
+        sys.exit(1)
 
     # Validate input file
     if not os.path.exists(args.audio):
@@ -86,10 +119,14 @@ def main():
 
     # Run diarization
     progress(0, 0, "Loading diarization model...")
-    pipeline = Pipeline.from_pretrained(
-        "pyannote/speaker-diarization-3.1",
-        token=args.hf_token
-    )
+    if args.models_dir:
+        pipeline_path = os.path.join(args.models_dir, "pyannote-diarization", "pipeline")
+        pipeline = Pipeline.from_pretrained(pipeline_path)
+    else:
+        pipeline = Pipeline.from_pretrained(
+            "pyannote/speaker-diarization-3.1",
+            token=args.hf_token
+        )
 
     progress(0, 0, "Running speaker diarization...")
     diarization = pipeline(
@@ -131,32 +168,48 @@ def main():
         end_sample = int(seg["end"] * sample_rate)
         prepared.append((seg, audio_data[start_sample:end_sample]))
 
-    # Transcribe segments in parallel
+    # Transcribe segments
     results = [None] * total
-    completed = [0]
-    lock = threading.Lock()
 
-    def transcribe_worker(index, seg, segment_audio):
-        text = transcribe_segment(segment_audio, sample_rate, args.cohere_key, args.language)
-        with lock:
-            completed[0] += 1
-            progress(completed[0], total, f"Transcribed {completed[0]}/{total} segments")
-        return index, seg, text
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [
-            executor.submit(transcribe_worker, i, seg, audio)
-            for i, (seg, audio) in enumerate(prepared)
-        ]
-        for future in as_completed(futures):
-            idx, seg, text = future.result()
-            if text and text not in ("[transcription failed", ""):
-                results[idx] = {
+    if args.local:
+        # Local inference: sequential (GPU not safely concurrent)
+        model, processor = load_local_model(models_dir=args.models_dir)
+        for i, (seg, segment_audio) in enumerate(prepared):
+            progress(i + 1, total, f"Transcribing {seg['speaker']} [{format_time(seg['start'])}-{format_time(seg['end'])}]")
+            text = transcribe_segment_local(segment_audio, sample_rate, model, processor, args.language)
+            if text and not text.startswith("[transcription failed"):
+                results[i] = {
                     "start": round(seg["start"], 2),
                     "end": round(seg["end"], 2),
                     "speaker": seg["speaker"],
                     "text": text
                 }
+    else:
+        # API mode: parallel requests
+        completed = [0]
+        lock = threading.Lock()
+
+        def transcribe_worker(index, seg, segment_audio):
+            text = transcribe_segment_api(segment_audio, sample_rate, args.cohere_key, args.language)
+            with lock:
+                completed[0] += 1
+                progress(completed[0], total, f"Transcribed {completed[0]}/{total} segments")
+            return index, seg, text
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [
+                executor.submit(transcribe_worker, i, seg, audio)
+                for i, (seg, audio) in enumerate(prepared)
+            ]
+            for future in as_completed(futures):
+                idx, seg, text = future.result()
+                if text and not text.startswith("[transcription failed"):
+                    results[idx] = {
+                        "start": round(seg["start"], 2),
+                        "end": round(seg["end"], 2),
+                        "speaker": seg["speaker"],
+                        "text": text
+                    }
 
     # Remove None entries (failed transcriptions)
     results = [r for r in results if r is not None]

@@ -40,14 +40,21 @@ final class DiarizationService: @unchecked Sendable {
             DispatchQueue.global(qos: .userInitiated).async { [pythonPath, scriptPath, hfToken, cohereKey] in
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: pythonPath)
-                process.arguments = [
+                var arguments = [
                     scriptPath,
                     "--audio", audioPath.path,
                     "--hf-token", hfToken,
-                    "--cohere-key", cohereKey,
+                    "--local",
                     "--min-speakers", "\(minSpeakers)",
                     "--max-speakers", "\(maxSpeakers)"
                 ]
+                if !cohereKey.isEmpty {
+                    arguments += ["--cohere-key", cohereKey]
+                }
+                if let modelsDir = AppConfig.shared.modelsDirectory {
+                    arguments += ["--models-dir", modelsDir]
+                }
+                process.arguments = arguments
 
                 let stdoutPipe = Pipe()
                 let stderrPipe = Pipe()

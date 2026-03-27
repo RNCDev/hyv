@@ -113,4 +113,10 @@ struct AppConfig {
     var diarizeScriptPath: String {
         scriptDirectory + "/diarize_and_transcribe.py"
     }
+
+    /// Path to bundled models directory, if it exists
+    var modelsDirectory: String? {
+        let path = AppConfig.detectProjectRoot() + "/models"
+        return FileManager.default.fileExists(atPath: path + "/cohere-transcribe") ? path : nil
+    }
 }
