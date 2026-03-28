@@ -1,4 +1,4 @@
-# Hyv v0.2.11
+# Hyv
 
 A macOS menu bar app that records both sides of a conversation — system audio (remote speakers) and your microphone — then produces a speaker-labeled transcript on your Desktop using on-device Whisper. No cloud, no API keys.
 
