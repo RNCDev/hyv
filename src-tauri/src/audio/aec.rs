@@ -5,67 +5,56 @@ use crate::audio::vad;
 
 const SAMPLE_RATE: u32 = 16000;
 
-/// Align mic and system audio buffers at the sample level by detecting each
-/// buffer's first speech onset and trimming leading silence from whichever
-/// channel starts later.
+/// Detect the render-ahead delay in milliseconds by comparing the first speech
+/// onset of the reference (system/far-end) vs the mic (near-end).
 ///
-/// Only corrects offsets > 500ms — smaller differences are normal jitter and
-/// aren't worth adjusting. Returns originals unchanged if neither channel
-/// contains speech or the offset is below the threshold.
-pub fn align_buffers(mic: &[f32], system: &[f32]) -> (Vec<f32>, Vec<f32>) {
+/// AEC3 needs to know how many ms ahead the reference signal is relative to
+/// the capture signal. In a typical call the AI starts speaking before the user
+/// responds, so `sys_onset < mic_onset`, giving a positive delay.
+///
+/// Returns 0 if either channel has no speech or if the computed delay is
+/// negative (mic starts first — unusual, but AEC can handle delay=0).
+pub fn detect_render_delay_ms(mic: &[f32], reference: &[f32]) -> u32 {
     let mic_onset = first_speech_onset(mic);
-    let sys_onset = first_speech_onset(system);
+    let sys_onset = first_speech_onset(reference);
 
     let (mic_onset, sys_onset) = match (mic_onset, sys_onset) {
         (Some(m), Some(s)) => (m, s),
         _ => {
-            info!("AEC align: one channel has no speech — skipping sample alignment");
-            return (mic.to_vec(), system.to_vec());
+            info!("AEC delay detect: one channel has no speech — using delay=0");
+            return 0;
         }
     };
 
-    let offset = mic_onset as i64 - sys_onset as i64;
-    let threshold = (SAMPLE_RATE / 2) as i64; // 500ms
+    let offset_samples = mic_onset as i64 - sys_onset as i64;
+    let offset_ms = offset_samples * 1000 / SAMPLE_RATE as i64;
 
-    if offset.abs() < threshold {
-        info!(
-            offset_ms = offset * 1000 / SAMPLE_RATE as i64,
-            "AEC align: offset within threshold, skipping"
-        );
-        return (mic.to_vec(), system.to_vec());
-    }
-
-    let (mic_out, sys_out) = if offset > 0 {
-        // Mic has more leading audio — trim its front
-        let trim = offset as usize;
-        let trimmed_mic = if trim < mic.len() { mic[trim..].to_vec() } else { vec![] };
-        (trimmed_mic, system.to_vec())
-    } else {
-        // System has more leading audio — trim its front
-        let trim = (-offset) as usize;
-        let trimmed_sys = if trim < system.len() { system[trim..].to_vec() } else { vec![] };
-        (mic.to_vec(), trimmed_sys)
-    };
-
-    // Truncate both to same length
-    let len = mic_out.len().min(sys_out.len());
-    let mic_out = mic_out[..len].to_vec();
-    let sys_out = sys_out[..len].to_vec();
+    // Negative means mic started before system (rare). Use 0 — AEC still works,
+    // it will adapt. Very large values (>5s) are implausible; clamp to 5000ms.
+    let delay_ms = offset_ms.clamp(0, 5000) as u32;
 
     info!(
-        offset_ms = offset * 1000 / SAMPLE_RATE as i64,
-        aligned_samples = len,
-        "AEC: aligned buffers at sample level"
+        mic_onset_ms = mic_onset * 1000 / SAMPLE_RATE as usize,
+        sys_onset_ms = sys_onset * 1000 / SAMPLE_RATE as usize,
+        offset_ms,
+        delay_ms,
+        "AEC: detected render-ahead delay"
     );
 
-    (mic_out, sys_out)
+    delay_ms
 }
 
 /// Cancel echo from `mic` using `reference` (system audio) as the far-end signal.
-/// Processes in 10ms frames using WebRTC AEC3 (pure Rust).
-/// Returns the cleaned mic signal (echo suppressed, user voice preserved).
-pub fn cancel_echo(mic: &[f32], reference: &[f32]) -> Vec<f32> {
-    let mut pipeline = match VoipAec3::builder(SAMPLE_RATE as usize, 1, 1).build() {
+/// `initial_delay_ms` tells AEC3 how far ahead the reference is — use
+/// `detect_render_delay_ms()` to compute this before calling.
+///
+/// Processes in 10ms frames using WebRTC AEC3 (pure Rust). Both buffers are
+/// used at their full length — no trimming. Returns the cleaned mic signal.
+pub fn cancel_echo(mic: &[f32], reference: &[f32], initial_delay_ms: u32) -> Vec<f32> {
+    let mut pipeline = match VoipAec3::builder(SAMPLE_RATE as usize, 1, 1)
+        .initial_delay_ms(initial_delay_ms as i32)
+        .build()
+    {
         Ok(p) => p,
         Err(e) => {
             warn!("AEC3 init failed: {e:?} — skipping echo cancellation");
@@ -84,7 +73,7 @@ pub fn cancel_echo(mic: &[f32], reference: &[f32]) -> Vec<f32> {
         let cap_end = cap_start + frame_size;
         let capture = &mic[cap_start..cap_end];
 
-        // Reference (render) frame — use same frame index, or silence if reference is shorter
+        // Reference (render) frame — silence if reference is shorter (tail of mic after system ended)
         let render: Option<&[f32]> = if cap_end <= reference.len() {
             Some(&reference[cap_start..cap_end])
         } else {
@@ -107,6 +96,7 @@ pub fn cancel_echo(mic: &[f32], reference: &[f32]) -> Vec<f32> {
     }
 
     info!(
+        initial_delay_ms,
         frames_processed = total_frames,
         input_samples = mic.len(),
         output_samples = output.len(),

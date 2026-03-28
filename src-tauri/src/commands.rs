@@ -231,13 +231,12 @@ fn process_recording(
     debug::save_audio(&mic_audio, "mic_normalized");
     debug::save_audio(&system_audio, "system_normalized");
 
-    // Sample-level alignment + echo cancellation.
-    // Align both buffers so their first speech onset is synchronised, then
-    // subtract the system audio (far-end/reference) from the mic (near-end/capture)
-    // so only the user's voice remains in Speaker 1 before Whisper runs.
-    let (mic_audio, system_audio) = aec::align_buffers(&mic_audio, &system_audio);
+    // Echo cancellation: detect how far ahead the reference (system audio) is
+    // relative to the mic, then pass that as initial_delay_ms to AEC3.
+    // Both buffers stay at full length — no trimming of content.
     let mic_audio = if !system_audio.is_empty() {
-        let cleaned = aec::cancel_echo(&mic_audio, &system_audio);
+        let delay_ms = aec::detect_render_delay_ms(&mic_audio, &system_audio);
+        let cleaned = aec::cancel_echo(&mic_audio, &system_audio, delay_ms);
         debug::save_audio(&cleaned, "mic_aec");
         cleaned
     } else {
