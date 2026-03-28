@@ -6,9 +6,10 @@ A macOS menu bar app that records both sides of a conversation — system audio 
 
 1. Click **Start Recording** — captures mic + system audio simultaneously as separate streams
 2. Click **Stop Recording** — triggers processing
-3. Energy-based VAD finds speech in each channel
+3. Energy-based VAD (with 200ms hangover) finds speech in each channel
 4. Whisper (medium model, Metal GPU) transcribes each channel
-5. Segments merged by timestamp → `.txt` file on your Desktop
+5. Duplicate segments caused by mic bleed-through are removed
+6. Segments merged by timestamp → `.txt` file on your Desktop
 
 Mic channel → labeled **"Me"**. System audio channel → labeled **"Remote"**.
 
@@ -142,15 +143,33 @@ Build produces a `.dmg` and `.app` in `src-tauri/target/release/bundle/macos/`. 
 | Output path | `~/Desktop/Hyv_Transcript_*.txt` | `src-tauri/src/output/transcript_writer.rs` |
 | Audio sample rate | 16 kHz mono | `src-tauri/src/audio/capture.rs` |
 | VAD energy threshold | 0.002 RMS | `src-tauri/src/commands.rs` |
+| VAD hangover | 200ms | `src-tauri/src/audio/vad.rs` |
+| Dedup time window | 3.0s | `src-tauri/src/commands.rs` |
+| Dedup similarity threshold | 0.65 (word overlap) | `src-tauri/src/commands.rs` |
+| Debug artifact storage | `~/Library/Application Support/Hyv/debug/` | `src-tauri/src/debug.rs` |
 | Whisper language | English (hardcoded) | `src-tauri/src/transcription/engine.rs` |
 
 ---
 
 ## Debugging
 
+After each recording, debug artifacts are saved automatically:
+
+| Artifact | Location | Purpose |
+|---|---|---|
+| **Log file** | `~/Library/Logs/Hyv/hyv.log` | Persistent structured logs (daily rolling, info level by default) |
+| **Raw mic audio** | `~/Library/Application Support/Hyv/debug/mic_*.wav` | Listen to what the mic captured — confirm bleed-through |
+| **Raw system audio** | `~/Library/Application Support/Hyv/debug/system_*.wav` | Listen to the system audio tap |
+| **Pre-dedup segments** | `~/Library/Application Support/Hyv/debug/segments_raw_*.json` | Full Whisper output before duplicate removal, with timestamps and speakers |
+
+Debug files older than 7 days are pruned automatically on startup.
+
 ```bash
-# Verbose Rust logs
+# Enable verbose Rust logs (also written to log file)
 RUST_LOG=debug npm run tauri dev
+
+# Tail the log file live
+tail -f ~/Library/Logs/Hyv/hyv.log
 
 # Frontend DevTools
 # Press Cmd+Option+I inside the app window (dev mode only)
@@ -166,9 +185,10 @@ During recording:
   CPAL mic callback              ──→ try_lock    ──→ mic_buffer Vec<f32>
 
 After stop:
-  mic_buffer    → VAD → chunk (max 30s) → Whisper Metal → "Me" segments
-  system_buffer → VAD → chunk (max 30s) → Whisper Metal → "Remote" segments
-  Merge by timestamp → ~/Desktop/Hyv_Transcript_*.txt
+  mic_buffer    → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Me" segments
+  system_buffer → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Remote" segments
+  Dedup: remove "Me" segments that match a "Remote" segment within 3s (word overlap > 65%)
+  Sort by timestamp → ~/Desktop/Hyv_Transcript_*.txt
 ```
 
 **Stack:** Tauri 2, React 19 / TypeScript / Vite, Rust, whisper-rs 0.14 (Metal), cidre (Core Audio), CPAL, tokio
@@ -203,6 +223,8 @@ See [CLAUDE.md](CLAUDE.md) for full internal architecture reference.
 | `ringbuf` 0.4 | Lock-free ring buffer for audio callbacks |
 | `tokio` 1 | Async runtime |
 | `reqwest` 0.12 | Whisper model download |
+| `hound` 3.5 | WAV file writing (debug audio saves) |
+| `tracing-appender` 0.2 | Rolling log file output |
 
 ---
 
