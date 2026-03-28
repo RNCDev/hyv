@@ -253,6 +253,12 @@ fn process_recording(
         all_segments.extend(sys_segments);
     }
 
+    // Align channel timestamps: the mic and system buffers may have different
+    // amounts of leading silence (e.g. mic starts capturing before the system
+    // audio tap begins draining). Detect the offset by comparing the first
+    // speech onset in each channel and shift Speaker 1 timestamps to match.
+    align_channels(&mut all_segments);
+
     // Save pre-dedup segments so we can inspect what Whisper produced
     debug::save_segments(&all_segments, "segments_raw");
 
@@ -296,6 +302,45 @@ fn process_channel(
         let pct = progress_start + (done as f64 / total as f64) * progress_range;
         update_progress(app, pct, &format!("Transcribing {speaker}: {done}/{total}"));
     })
+}
+
+/// Align Speaker 1 (mic) timestamps to Speaker 2 (system) by detecting the
+/// offset between each channel's first speech onset. The mic buffer often has
+/// more leading audio because CPAL starts before the system audio tap drains.
+fn align_channels(segments: &mut [TranscribedSegment]) {
+    let s1_first = segments
+        .iter()
+        .filter(|s| s.speaker == "Speaker 1")
+        .map(|s| s.start)
+        .reduce(f64::min);
+    let s2_first = segments
+        .iter()
+        .filter(|s| s.speaker == "Speaker 2")
+        .map(|s| s.start)
+        .reduce(f64::min);
+
+    let (Some(s1), Some(s2)) = (s1_first, s2_first) else {
+        return; // Only one channel present, nothing to align
+    };
+
+    let offset = s1 - s2;
+    // Only correct if the offset is significant (>1s). Small offsets are
+    // normal timestamp jitter and shouldn't be adjusted.
+    if offset.abs() <= 1.0 {
+        return;
+    }
+
+    info!(
+        offset = format!("{:.2}s", offset),
+        "Aligning Speaker 1 timestamps (shifting by -{:.2}s)", offset
+    );
+
+    for seg in segments.iter_mut() {
+        if seg.speaker == "Speaker 1" {
+            seg.start -= offset;
+            seg.end -= offset;
+        }
+    }
 }
 
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
