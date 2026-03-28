@@ -1,3 +1,5 @@
+import { useState, useEffect } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useAppState } from "./hooks/useAppState";
 import { StatusIndicator } from "./components/StatusIndicator";
 import { RecordingControls } from "./components/RecordingControls";
@@ -5,12 +7,17 @@ import { TranscriptList } from "./components/TranscriptList";
 
 function App() {
   const { status, recordingTime, formatTime } = useAppState();
+  const [version, setVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setVersion);
+  }, []);
 
   return (
     <div style={styles.container}>
       <div style={styles.header}>
         <span style={styles.logo}>Hyv</span>
-        <span style={styles.version}>v0.2.11</span>
+        <span style={styles.version}>{version ? `v${version}` : ""}</span>
       </div>
 
       <StatusIndicator status={status} recordingTime={recordingTime} formatTime={formatTime} />
