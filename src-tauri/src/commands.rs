@@ -231,7 +231,7 @@ fn process_recording(
         update_progress(app, 0.0, "Analyzing microphone audio...");
         let mic_segments = process_channel(
             mic_audio,
-            "Me",
+            "Speaker 1",
             PROGRESS_MIC_START,
             PROGRESS_MIC_RANGE,
             &engine,
@@ -244,7 +244,7 @@ fn process_recording(
         update_progress(app, 50.0, "Analyzing system audio...");
         let sys_segments = process_channel(
             system_audio,
-            "Remote",
+            "Speaker 2",
             PROGRESS_SYS_START,
             PROGRESS_SYS_RANGE,
             &engine,
@@ -301,12 +301,12 @@ fn process_channel(
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
     const TIME_WINDOW: f64 = 3.0;
     const SIMILARITY_THRESHOLD: f64 = 0.65;
-    // Short "Me" segments (≤ this many words) are never dropped — they're
+    // Short "Speaker 1" segments (≤ this many words) are never dropped — they're
     // likely genuine brief responses ("Sure", "Cool", "Thanks") that would
     // false-positive against any nearby Remote segment.
     const MIN_WORDS_TO_DEDUP: usize = 4;
 
-    let has_remote = segments.iter().any(|s| s.speaker == "Remote");
+    let has_remote = segments.iter().any(|s| s.speaker == "Speaker 2");
     if !has_remote {
         return segments;
     }
@@ -324,7 +324,7 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
     // Pre-compute remote data: (start, end, word set)
     let remote_entries: Vec<(f64, f64, HashSet<String>)> = segments
         .iter()
-        .filter(|s| s.speaker == "Remote")
+        .filter(|s| s.speaker == "Speaker 2")
         .map(|s| {
             let ws: HashSet<String> = words(&s.text).into_iter().collect();
             (s.start, s.end, ws)
@@ -334,7 +334,7 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
     let mut dropped = 0usize;
     let mut result = Vec::with_capacity(segments.len());
     for seg in segments {
-        if seg.speaker != "Me" {
+        if seg.speaker != "Speaker 1" {
             result.push(seg);
             continue;
         }

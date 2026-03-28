@@ -11,7 +11,7 @@ A macOS menu bar app that records both sides of a conversation — system audio 
 5. Duplicate segments caused by mic bleed-through are removed
 6. Segments merged by timestamp → `.txt` file on your Desktop
 
-Mic channel → labeled **"Me"**. System audio channel → labeled **"Remote"**.
+Mic channel → labeled **"Speaker 1"**. System audio channel → labeled **"Speaker 2"**. Consecutive same-speaker segments within 2 seconds are merged into paragraphs.
 
 ---
 
@@ -107,9 +107,8 @@ Duration: 5:12
 Speakers: 2
 ========================
 
-[00:03] Me: Hey, can you hear me okay?
-[00:07] Remote: Yeah, loud and clear.
-[00:14] Me: Great, let's get started.
+[00:03] Speaker 2: Hey, can you hear me okay?
+[00:07] Speaker 1: Yeah, loud and clear. Great, let's get started.
 ...
 
 === End of Transcript ===
@@ -185,10 +184,10 @@ During recording:
   CPAL mic callback              ──→ try_lock    ──→ mic_buffer Vec<f32>
 
 After stop:
-  mic_buffer    → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Me" segments
-  system_buffer → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Remote" segments
-  Dedup: remove "Me" segments that match a "Remote" segment within 3s (word overlap > 65%)
-  Sort by timestamp → ~/Desktop/Hyv_Transcript_*.txt
+  mic_buffer    → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Speaker 1" segments
+  system_buffer → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Speaker 2" segments
+  Dedup: remove "Speaker 1" segments that match "Speaker 2" within 3s (word overlap > 65%)
+  Merge consecutive same-speaker segments (≤2s gap) → ~/Desktop/Hyv_Transcript_*.txt
 ```
 
 **Stack:** Tauri 2, React 19 / TypeScript / Vite, Rust, whisper-rs 0.14 (Metal), cidre (Core Audio), CPAL, tokio
@@ -225,6 +224,7 @@ See [CLAUDE.md](CLAUDE.md) for full internal architecture reference.
 | `reqwest` 0.12 | Whisper model download |
 | `hound` 3.5 | WAV file writing (debug audio saves) |
 | `tracing-appender` 0.2 | Rolling log file output |
+| `chrono` 0.4 | Date/time formatting |
 
 ---
 
@@ -234,7 +234,7 @@ See [CLAUDE.md](CLAUDE.md) for full internal architecture reference.
 - Processing is ~2–3× real-time on M-series (medium model) — a 10-minute recording takes ~20–30 minutes to process
 - System audio capture requires Screen Recording permission (macOS 14 limitation)
 - Multiple recordings within the same minute produce the same filename
-- All remote speakers labeled "Remote" — no per-speaker diarization yet
+- All remote speakers labeled "Speaker 2" — no per-speaker diarization yet
 
 ## License
 

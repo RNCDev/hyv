@@ -52,8 +52,8 @@ impl WhisperEngine {
         params.set_n_threads(4);
         params.set_no_timestamps(false);
         params.set_suppress_nst(true);
-        // Lower threshold for better quiet speech detection (meetily uses 0.55)
-        params.set_no_speech_thold(0.55);
+        // Meetily uses 0.6; suppresses low-confidence bleed/noise segments
+        params.set_no_speech_thold(0.6);
 
         let mut state = self
             .ctx

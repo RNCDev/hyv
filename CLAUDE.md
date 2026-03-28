@@ -216,8 +216,8 @@ Duration: 5:12
 Speakers: 2
 ========================
 
-[00:03] Me: ...
-[00:07] Remote: ...
+[00:03] Speaker 1: ...
+[00:07] Speaker 2: ...
 
 === End of Transcript ===
 ```
@@ -260,7 +260,7 @@ curl ... | sh             # Rust via rustup
 ## Known Limitations / Future Work
 
 - **English only** — `params.set_language(Some("en"))` in `engine.rs`
-- **Single speaker per channel** — no diarization on system audio; all remote speakers labeled "Remote"
+- **Single speaker per channel** — no diarization on system audio; all system speakers labeled "Speaker 2"
 - **Processing time** — medium model: ~2–3× real-time on M3. 10-min recording → ~20–30 min to process
 - **Ring buffer** — 131,072 samples (~8s) — very long system audio bursts could overflow before drain
 - **No SHA256 check** on downloaded model
@@ -276,3 +276,51 @@ curl ... | sh             # Rust via rustup
 - **Accuracy over speed** — full post-processing batch after stop, not real-time streaming
 - **Channel separation** — mic and system audio captured and transcribed independently
 - **Manual control** — user starts/stops explicitly, no auto-detection
+
+---
+
+## Reference Repositories
+
+Similar apps to study for proven patterns and configuration values. Check these when investigating improvements to audio capture, VAD, transcription, or diarization.
+
+### Meetily — [Zackriya-Solutions/meetily](https://github.com/Zackriya-Solutions/meetily/tree/main/backend)
+
+Meeting transcription with whisper.cpp server + FastAPI backend.
+
+- **Whisper tuning:** `no_speech_thold=0.6`, `entropy_thold=2.4`, `logprob_thold=-1.0`, `word_thold=0.01`
+- **Diarization:** Stereo energy-based — 1.1x amplitude ratio threshold between channels to determine dominant speaker
+- **Streaming:** 200ms overlap between consecutive processed segments for continuity
+- **Key files:** `backend/whisper-custom/server/server.cpp` (Whisper params), `backend/app/transcript_processor.py` (text chunking)
+
+### Hyprnote — [bahodirr/hyprnote](https://github.com/bahodirr/hyprnote)
+
+Tauri + Rust meeting transcriber (closest architecture to Hyv).
+
+- **Dual VAD:** Silero VAD (`silero-rs`) + Ten-VAD ONNX model bundled via `include_bytes!()`
+- **Audio normalization:** EBU R128 targeting -23 LUFS with true peak limiting (10ms lookahead)
+- **Model:** Quantized `ggml-small-q8_0.bin` for speed (vs our unquantized medium)
+- **macOS capture:** Same cidre + aggregate device approach as Hyv, with lock-free ring buffers
+- **Streaming transcription:** Real-time per-segment output via `TranscriptionTask<S, T>` struct
+- **Speaker embeddings:** MFCC-based via ONNX, cosine distance for speaker discrimination
+- **Key crates:** `silero-rs`, `ten-vad-rs`, `knf_rs` (MFCC features), `dasp` (resampling)
+
+### Minute — [roblibob/minute](https://github.com/roblibob/minute)
+
+macOS Apple Silicon meeting app with FluidAudio (Parakeet ASR).
+
+- **VAD:** RMS silence threshold 0.03, 0.75s transient tolerance, auto-stop after 120s silence
+- **Diarization:** FluidAudio with 0.55 clustering threshold, 0.25s silence gap, 0.4s min speech duration, 1.0s chunk overlap
+- **Vocabulary boosting:** Three strength levels (gentle/balanced/aggressive) for domain terms
+- **Output:** Obsidian-compatible Markdown with YAML frontmatter, deterministic JSON schema
+- **Audio normalization:** Two-pass FFmpeg loudnorm (`I=-16:TP=-1.5:LRA=11`)
+
+### Project Raven — [Laxcorp-Research/project-raven](https://github.com/Laxcorp-Research/project-raven)
+
+Electron meeting recorder with Deepgram Nova-3.
+
+- **Echo cancellation:** GStreamer WebRTC AEC3 (same as Chrome) with adaptive bypass on drift >200ms or high overflow
+- **Segment merging:** 2-second window for consecutive same-speaker segments (we adopted this)
+- **Session management:** 5000-entry cap with 20% eviction, auto-save every 60s, crash recovery
+- **macOS capture:** ScreenCaptureKit for system audio + CoreAudio for mic
+- **Transcription:** Deepgram Nova-3 with 300ms endpointing, 1.5s utterance end threshold
+- **Storage:** SQLite WAL mode with encrypted API keys

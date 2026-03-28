@@ -17,8 +17,11 @@ pub fn write_transcript(
     // Sort by start time
     segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
 
+    // Merge consecutive same-speaker segments within 2s gap
+    let merged = merge_segments(segments);
+
     // Count unique speakers
-    let speaker_count = segments
+    let speaker_count = merged
         .iter()
         .map(|s| s.speaker.as_str())
         .collect::<std::collections::HashSet<_>>()
@@ -39,7 +42,7 @@ pub fn write_transcript(
     writeln!(file).ok();
 
     // Segments
-    for seg in segments.iter() {
+    for seg in &merged {
         let text = seg.text.trim();
         if text.is_empty() {
             continue;
@@ -48,11 +51,42 @@ pub fn write_transcript(
         writeln!(file, "[{ts}] {}: {text}", seg.speaker).ok();
     }
 
+    info!(
+        raw = segments.len(),
+        merged = merged.len(),
+        "Segments merged for output"
+    );
+
     writeln!(file).ok();
     writeln!(file, "=== End of Transcript ===").ok();
 
     info!(path = %path.display(), segments = segments.len(), "Transcript written");
     Ok(path)
+}
+
+/// Merge consecutive segments from the same speaker when the gap is ≤ 2 seconds.
+fn merge_segments(segments: &[TranscribedSegment]) -> Vec<TranscribedSegment> {
+    const MERGE_GAP: f64 = 2.0;
+
+    let mut merged: Vec<TranscribedSegment> = Vec::new();
+    for seg in segments {
+        let text = seg.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let should_merge = merged
+            .last()
+            .is_some_and(|prev| prev.speaker == seg.speaker && seg.start - prev.end <= MERGE_GAP);
+        if should_merge {
+            let prev = merged.last_mut().unwrap();
+            prev.end = seg.end;
+            prev.text.push(' ');
+            prev.text.push_str(text);
+        } else {
+            merged.push(seg.clone());
+        }
+    }
+    merged
 }
 
 fn format_timestamp(secs: f64) -> String {
