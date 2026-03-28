@@ -379,11 +379,11 @@ fn align_channels(segments: &mut [TranscribedSegment]) {
 
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
     const TIME_WINDOW: f64 = 5.0;
-    const SIMILARITY_THRESHOLD: f64 = 0.65;
+    const SIMILARITY_THRESHOLD: f64 = 0.55;
     // Short "Speaker 1" segments (≤ this many words) are never dropped — they're
     // likely genuine brief responses ("Sure", "Cool", "Thanks") that would
     // false-positive against any nearby Remote segment.
-    const MIN_WORDS_TO_DEDUP: usize = 3;
+    const MIN_WORDS_TO_DEDUP: usize = 2;
 
     let has_remote = segments.iter().any(|s| s.speaker == "Speaker 2");
     if !has_remote {

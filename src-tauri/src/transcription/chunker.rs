@@ -1,6 +1,15 @@
+use tracing::info;
+
 use crate::audio::vad::SpeechSegment;
 
 const WHISPER_CHUNK_SECS: f64 = 30.0;
+
+/// Minimum RMS energy a chunk must have to be sent to Whisper.
+/// Chunks below this threshold are near-silence — Whisper tends to hallucinate
+/// plausible-sounding text on them rather than returning nothing.
+/// 0.002 matches the VAD energy threshold; chunks this quiet slipped through VAD
+/// at segment boundaries and should be skipped.
+const MIN_CHUNK_RMS: f32 = 0.002;
 
 /// A chunk of audio to be transcribed.
 #[derive(Debug, Clone)]
@@ -31,9 +40,24 @@ pub fn chunk_speech(
         while pos < seg_audio.len() {
             let end = (pos + chunk_samples).min(seg_audio.len());
             let chunk_offset = seg_offset + (pos as f64 / sample_rate as f64);
+            let chunk_samples_slice = &seg_audio[pos..end];
+
+            // RMS gate: skip near-silent chunks to prevent Whisper hallucinations
+            let rms = (chunk_samples_slice.iter().map(|s| s * s).sum::<f32>()
+                / chunk_samples_slice.len() as f32)
+                .sqrt();
+            if rms < MIN_CHUNK_RMS {
+                info!(
+                    rms = format!("{:.5}", rms),
+                    offset = format!("{:.1}s", chunk_offset),
+                    "Chunker: skipping near-silent chunk (rms below threshold)"
+                );
+                pos = end;
+                continue;
+            }
 
             chunks.push(AudioChunk {
-                samples: seg_audio[pos..end].to_vec(),
+                samples: chunk_samples_slice.to_vec(),
                 offset_secs: chunk_offset,
                 index: 0, // Set after collecting all chunks
                 total: 0,

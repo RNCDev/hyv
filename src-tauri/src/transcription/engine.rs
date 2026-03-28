@@ -53,8 +53,8 @@ impl WhisperEngine {
         params.set_no_timestamps(false);
         params.set_suppress_nst(true);
         // Suppress segments where Whisper is not confident speech is present.
-        // 0.6 is Meetily's value (default is 0.6, was previously tuned to 0.55).
-        params.set_no_speech_thold(0.6);
+        // Raised to 0.65 — 0.6 still passed hallucinated text on near-silent chunks.
+        params.set_no_speech_thold(0.65);
         // Reject high-entropy segments — Whisper produces garbage text when
         // confused about the audio content. 2.4 is Meetily's value.
         params.set_entropy_thold(2.4);
