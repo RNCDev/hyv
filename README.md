@@ -1,91 +1,188 @@
-# Hyv
+# Hyv v0.2.1
 
-A macOS menu bar app that records both sides of a meeting (system audio + microphone) and produces speaker-labeled transcripts on your Desktop using on-device Whisper.
+A macOS menu bar app that records both sides of a conversation — system audio (remote speakers) and your microphone — then produces a speaker-labeled transcript on your Desktop using on-device Whisper. No cloud, no API keys.
 
 ## How it works
 
-1. **Records dual audio** — captures system audio (remote participants) via Core Audio Process Tap and your microphone via CPAL
-2. **Runs VAD** — energy-based voice activity detection on both channels to find speech segments
-3. **Transcribes locally** — runs Whisper (medium model, on-device via Metal) on each channel
-4. **Labels speakers** — mic channel → "Me", system channel → "Remote"
-5. **Writes transcript** — merges segments by timestamp into a `.txt` file on your Desktop
+1. Click **Start Recording** — captures mic + system audio simultaneously as separate streams
+2. Click **Stop Recording** — triggers processing
+3. Energy-based VAD finds speech in each channel
+4. Whisper (medium model, Metal GPU) transcribes each channel
+5. Segments merged by timestamp → `.txt` file on your Desktop
 
-Processing happens after recording stops. First run downloads the Whisper medium model (~1.5GB) automatically.
+Mic channel → labeled **"Me"**. System audio channel → labeled **"Remote"**.
+
+---
 
 ## Requirements
 
-- macOS 14.0+ (Apple Silicon)
-- Rust (via `rustup`)
-- Node.js 18+
-- Tauri CLI (`cargo install tauri-cli`)
+| Dependency | Version | Install |
+|---|---|---|
+| macOS | 14.0+ (Apple Silicon) | — |
+| Xcode Command Line Tools | latest | `xcode-select --install` |
+| Rust | 1.85+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| Node.js | 18+ | `brew install node` |
+| CMake | 3.20+ | `brew install cmake` |
+
+No Python, no API keys, no HuggingFace token required.
+
+---
 
 ## Setup
 
 ```bash
-git clone https://github.com/your-username/hyv.git
+git clone https://github.com/ritujoychowdhury/hyv.git
 cd hyv
 npm install
 ```
 
-## Build & Run
+### Whisper model (first-time only)
+
+The app downloads the Whisper medium model (~1.5 GB) automatically on first recording. You can also pre-download to avoid waiting:
 
 ```bash
-# Development
+mkdir -p ~/Library/Application\ Support/Hyv/models
+
+# Medium model — recommended (~1.5 GB, ~2–3 min to process 30s of audio)
+curl -L -o ~/Library/Application\ Support/Hyv/models/ggml-medium.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
+
+# Small model — faster (~490 MB, ~1 min to process 30s of audio)
+# curl -L -o ~/Library/Application\ Support/Hyv/models/ggml-small.bin \
+#   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+---
+
+## Run
+
+```bash
+# Development (hot reload)
 npm run tauri dev
 
 # Production build
 npm run tauri build
+# App: src-tauri/target/release/bundle/macos/Hyv.app
 ```
 
-On first launch, grant **Screen & System Audio Recording** and **Microphone** permissions in System Settings > Privacy & Security.
+---
 
-On first recording, the Whisper medium model (~1.5GB) downloads automatically. The status bar will show download progress. Click Start Recording again once it returns to "Ready to record."
+## macOS Permissions
+
+On first launch the system will prompt for two permissions — both are required:
+
+| Permission | Why |
+|---|---|
+| **Microphone** | Captures your voice via CPAL |
+| **Screen Recording** | Required by Core Audio Process Tap to capture system audio |
+
+Grant both in **System Settings → Privacy & Security**. If you accidentally deny:
+
+```bash
+tccutil reset Microphone com.hyv.app
+tccutil reset ScreenCapture com.hyv.app
+```
+
+Then relaunch the app.
+
+---
 
 ## Usage
 
-1. App runs as a menu bar icon — click it to open the panel
-2. Click **Start Recording** when your meeting begins
-3. Click **Stop Recording** when done
-4. Processing runs locally — transcript appears on your Desktop when complete
+1. Click the menu bar icon to open the panel
+2. Click **Start Recording**
+   - First run: model downloads (~1.5 GB). Status shows progress. Click Start again when it returns to "Ready to record."
+3. Record your conversation
+4. Click **Stop Recording**
+5. Processing runs on-device (progress shown). Transcript appears on Desktop when done.
+6. Recent transcripts listed in the panel — click to open, ✕ to delete.
 
 ### Output format
 
 ```
 === Hyv Transcript ===
-Date: March 27, 2026 at 3:27 PM
-Duration: 30:00
+Date: March 28, 2026 at 9:00 AM
+Duration: 5:12
 Speakers: 2
 ========================
 
-[00:03] Remote: Hello, can you hear me?
-[00:08] Me: Yeah, loud and clear.
+[00:03] Me: Hey, can you hear me okay?
+[00:07] Remote: Yeah, loud and clear.
+[00:14] Me: Great, let's get started.
 ...
 
 === End of Transcript ===
 ```
 
-## Architecture
+Transcripts saved to `~/Desktop/Hyv_Transcript_YYYY-MM-DD_HH-MM.txt`.
 
+---
+
+## Deployment
+
+### For personal use
+
+```bash
+npm run tauri build
+cp -r src-tauri/target/release/bundle/macos/Hyv.app /Applications/
+open /Applications/Hyv.app
 ```
-During recording:
-  Core Audio Process Tap (system audio) ──→ ring buffer → shared Vec<f32>
-  CPAL (microphone)                     ──→ CPAL callback → shared Vec<f32>
 
-After recording:
-  mic buffer    → VAD → Whisper (Metal) → "Me" segments
-  system buffer → VAD → Whisper (Metal) → "Remote" segments
-  → merge by timestamp → transcript .txt on Desktop
-```
+### For sharing with others (unsigned)
 
-**Stack:** Tauri 2 + React/TypeScript frontend, Rust backend, whisper-rs (Metal), cidre (Core Audio), CPAL
+Build produces a `.dmg` and `.app` in `src-tauri/target/release/bundle/macos/`. Recipients will need to right-click → Open on first launch to bypass Gatekeeper (unsigned build).
+
+### Key settings
+
+| Setting | Value | Location |
+|---|---|---|
+| Bundle ID | `com.hyv.app` | `src-tauri/tauri.conf.json` |
+| Min macOS | 14.0 | `src-tauri/tauri.conf.json` |
+| Model storage | `~/Library/Application Support/Hyv/models/` | `src-tauri/src/transcription/model_manager.rs` |
+| Output path | `~/Desktop/Hyv_Transcript_*.txt` | `src-tauri/src/output/transcript_writer.rs` |
+| Audio sample rate | 16 kHz mono | `src-tauri/src/audio/capture.rs` |
+| VAD energy threshold | 0.002 RMS | `src-tauri/src/commands.rs` |
+| Whisper language | English (hardcoded) | `src-tauri/src/transcription/engine.rs` |
+
+---
 
 ## Debugging
 
 ```bash
+# Verbose Rust logs
 RUST_LOG=debug npm run tauri dev
+
+# Frontend DevTools
+# Press Cmd+Option+I inside the app window (dev mode only)
 ```
 
-See [CLAUDE.md](CLAUDE.md) for full project structure and architecture details.
+---
+
+## Architecture
+
+```
+During recording:
+  Core Audio Process Tap (cidre) ──→ ring buffer ──→ drain thread (50ms) ──→ system_buffer Vec<f32>
+  CPAL mic callback              ──→ try_lock    ──→ mic_buffer Vec<f32>
+
+After stop:
+  mic_buffer    → VAD → chunk (max 30s) → Whisper Metal → "Me" segments
+  system_buffer → VAD → chunk (max 30s) → Whisper Metal → "Remote" segments
+  Merge by timestamp → ~/Desktop/Hyv_Transcript_*.txt
+```
+
+**Stack:** Tauri 2, React 19 / TypeScript / Vite, Rust, whisper-rs 0.14 (Metal), cidre (Core Audio), CPAL, tokio
+
+See [CLAUDE.md](CLAUDE.md) for full internal architecture reference.
+
+---
+
+## Known Limitations
+
+- English only (Whisper language hardcoded)
+- Processing is ~2–3× real-time on M-series (medium model) — a 10-minute recording takes ~20–30 minutes to process
+- System audio capture requires Screen Recording permission (macOS 14 limitation)
+- Multiple recordings within the same minute produce the same filename
 
 ## License
 

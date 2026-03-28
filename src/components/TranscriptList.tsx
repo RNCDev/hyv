@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getRecentTranscripts, openTranscript } from "../lib/commands";
+import { getRecentTranscripts, openTranscript, deleteTranscript } from "../lib/commands";
 
 export function TranscriptList() {
   const [transcripts, setTranscripts] = useState<string[]>([]);
@@ -19,6 +19,16 @@ export function TranscriptList() {
     }
   };
 
+  const handleDelete = async (e: React.MouseEvent, path: string) => {
+    e.stopPropagation();
+    try {
+      await deleteTranscript(path);
+      setTranscripts((prev) => prev.filter((p) => p !== path));
+    } catch (err) {
+      console.error("Failed to delete transcript:", err);
+    }
+  };
+
   if (transcripts.length === 0) {
     return (
       <div style={styles.empty}>
@@ -33,13 +43,21 @@ export function TranscriptList() {
       {transcripts.map((path) => {
         const name = path.split("/").pop() || path;
         return (
-          <button
-            key={path}
-            onClick={() => openTranscript(path)}
-            style={styles.item}
-          >
-            {name.replace("Hyv_Transcript_", "").replace(".txt", "")}
-          </button>
+          <div key={path} style={styles.row}>
+            <button
+              onClick={() => openTranscript(path)}
+              style={styles.item}
+            >
+              {name.replace("Hyv_Transcript_", "").replace(".txt", "")}
+            </button>
+            <button
+              onClick={(e) => handleDelete(e, path)}
+              style={styles.deleteBtn}
+              title="Delete"
+            >
+              ✕
+            </button>
+          </div>
         );
       })}
     </div>
@@ -59,9 +77,13 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: "0.5px",
     marginBottom: "4px",
   },
+  row: {
+    display: "flex",
+    alignItems: "center",
+    gap: "4px",
+  },
   item: {
-    display: "block",
-    width: "100%",
+    flex: 1,
     textAlign: "left" as const,
     padding: "8px 10px",
     background: "#16213e",
@@ -70,13 +92,24 @@ const styles: Record<string, React.CSSProperties> = {
     color: "#ccc",
     fontSize: "12px",
     cursor: "pointer",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap" as const,
   },
-  empty: {
-    padding: "16px",
-    textAlign: "center" as const,
-  },
-  emptyText: {
-    fontSize: "12px",
+  deleteBtn: {
+    flexShrink: 0,
+    width: "28px",
+    height: "28px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "transparent",
+    border: "none",
+    borderRadius: "6px",
     color: "#666",
+    fontSize: "11px",
+    cursor: "pointer",
+    padding: 0,
   },
 };

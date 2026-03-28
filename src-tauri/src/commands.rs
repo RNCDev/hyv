@@ -87,19 +87,35 @@ pub async fn start_recording(
     let system_buffer = state.system_buffer.clone();
     let active = state.recording_active.clone();
 
-    // Start mic capture in a dedicated thread (CPAL uses callbacks)
+    // Start mic capture in a dedicated thread (CPAL streams are not Send).
+    // Use a oneshot channel to wait until the mic is actually running before
+    // returning, so stop_recording can't clone empty buffers due to a race.
     let active_clone = active.clone();
+    let (mic_ready_tx, mic_ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
     std::thread::spawn(move || {
         let mut mic = MicCapture::new();
-        if let Err(e) = mic.start(mic_buffer, active_clone.clone()) {
-            error!("Mic capture failed: {e}");
-            return;
+        match mic.start(mic_buffer, active_clone.clone()) {
+            Ok(()) => {
+                let _ = mic_ready_tx.send(Ok(()));
+            }
+            Err(e) => {
+                error!("Mic capture failed: {e}");
+                let _ = mic_ready_tx.send(Err(e));
+                return;
+            }
         }
         while active_clone.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         mic.stop();
     });
+
+    // Wait for mic to confirm it started (or failed) before proceeding.
+    // This prevents stop_recording from cloning empty buffers if the OS
+    // delays scheduling the thread.
+    if let Ok(Err(e)) = mic_ready_rx.await {
+        error!("Mic capture did not start: {e}");
+    }
 
     // System audio via Core Audio Process Tap
     {
@@ -302,4 +318,9 @@ pub async fn open_transcript(path: String) -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Failed to open file: {e}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_transcript(path: String) -> Result<(), String> {
+    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {e}"))
 }

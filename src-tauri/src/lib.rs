@@ -34,7 +34,7 @@ pub fn run() {
                 app.set_activation_policy(ActivationPolicy::Accessory);
             }
 
-            tracing::info!("Hyv v0.2.0 started");
+            tracing::info!("Hyv v0.2.1 started");
             Ok(())
         })
         .on_tray_icon_event(|app, event| {
@@ -54,6 +54,7 @@ pub fn run() {
             commands::stop_recording,
             commands::get_recent_transcripts,
             commands::open_transcript,
+            commands::delete_transcript,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hyv");

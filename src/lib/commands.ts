@@ -26,3 +26,7 @@ export async function getRecentTranscripts(): Promise<string[]> {
 export async function openTranscript(path: string): Promise<void> {
   return invoke("open_transcript", { path });
 }
+
+export async function deleteTranscript(path: string): Promise<void> {
+  return invoke("delete_transcript", { path });
+}
