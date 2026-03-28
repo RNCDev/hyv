@@ -176,7 +176,10 @@ Progress emits: 0% → 10% (mic VAD) → 10–50% (mic Whisper) → 50% → 55�
 - Threads: 4
 - Language: `"en"` (hardcoded)
 - Strategy: Greedy (best_of=1)
-- `no_speech_thold`: 0.55 (lower than default to catch quieter speech)
+- `no_speech_thold`: 0.6 (suppresses low-confidence segments — Meetily)
+- `entropy_thold`: 2.4 (rejects high-entropy/hallucinated segments — Meetily)
+- `logprob_thold`: -1.0 (rejects low average token log-probability — Meetily)
+- `thold_pt`: 0.01 (minimum per-token timestamp probability)
 - New `WhisperState` per chunk (stateless)
 - Timestamps in centiseconds, converted to seconds + chunk offset
 

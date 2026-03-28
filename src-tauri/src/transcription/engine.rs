@@ -52,8 +52,17 @@ impl WhisperEngine {
         params.set_n_threads(4);
         params.set_no_timestamps(false);
         params.set_suppress_nst(true);
-        // Meetily uses 0.6; suppresses low-confidence bleed/noise segments
+        // Suppress segments where Whisper is not confident speech is present.
+        // 0.6 is Meetily's value (default is 0.6, was previously tuned to 0.55).
         params.set_no_speech_thold(0.6);
+        // Reject high-entropy segments — Whisper produces garbage text when
+        // confused about the audio content. 2.4 is Meetily's value.
+        params.set_entropy_thold(2.4);
+        // Reject segments with low average token log-probability. Segments below
+        // -1.0 are likely hallucinations on near-silence. Meetily's value.
+        params.set_logprob_thold(-1.0);
+        // Minimum per-token timestamp probability. Filters uncertain word boundaries.
+        params.set_thold_pt(0.01);
 
         let mut state = self
             .ctx

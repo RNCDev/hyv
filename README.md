@@ -146,6 +146,9 @@ Build produces a `.dmg` and `.app` in `src-tauri/target/release/bundle/macos/`. 
 | Dedup time window | 3.0s | `src-tauri/src/commands.rs` |
 | Dedup similarity threshold | 0.65 (word overlap) | `src-tauri/src/commands.rs` |
 | Debug artifact storage | `~/Library/Application Support/Hyv/debug/` | `src-tauri/src/debug.rs` |
+| Whisper no_speech_thold | 0.6 | `src-tauri/src/transcription/engine.rs` |
+| Whisper entropy_thold | 2.4 | `src-tauri/src/transcription/engine.rs` |
+| Whisper logprob_thold | -1.0 | `src-tauri/src/transcription/engine.rs` |
 | Whisper language | English (hardcoded) | `src-tauri/src/transcription/engine.rs` |
 
 ---
@@ -184,10 +187,9 @@ During recording:
   CPAL mic callback              ──→ try_lock    ──→ mic_buffer Vec<f32>
 
 After stop:
-  mic_buffer    → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Speaker 1" segments
-  system_buffer → VAD (200ms hangover) → chunk (max 30s) → Whisper Metal → "Speaker 2" segments
-  Dedup: remove "Speaker 1" segments that match "Speaker 2" within 3s (word overlap > 65%)
-  Merge consecutive same-speaker segments (≤2s gap) → ~/Desktop/Hyv_Transcript_*.txt
+  mic_buffer    → normalize (-16 LUFS) → AEC (echo cancel, delay-aware) → VAD → chunk → Whisper → "Speaker 1"
+  system_buffer → normalize (-16 LUFS) → (AEC reference) → VAD → chunk → Whisper → "Speaker 2"
+  Align timestamps → dedup bleed (word overlap >65%, 3s window) → merge (≤2s gap) → ~/Desktop/Hyv_Transcript_*.txt
 ```
 
 **Stack:** Tauri 2, React 19 / TypeScript / Vite, Rust, whisper-rs 0.14 (Metal), cidre (Core Audio), CPAL, tokio
@@ -222,6 +224,8 @@ See [CLAUDE.md](CLAUDE.md) for full internal architecture reference.
 | `ringbuf` 0.4 | Lock-free ring buffer for audio callbacks |
 | `tokio` 1 | Async runtime |
 | `reqwest` 0.12 | Whisper model download |
+| `ebur128` 0.1 | EBU R128 loudness measurement and normalization |
+| `aec3` 0.1 | Pure-Rust WebRTC AEC3 echo cancellation |
 | `hound` 3.5 | WAV file writing (debug audio saves) |
 | `tracing-appender` 0.2 | Rolling log file output |
 | `chrono` 0.4 | Date/time formatting |

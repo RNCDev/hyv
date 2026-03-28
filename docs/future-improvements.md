@@ -31,14 +31,8 @@ Custom word lists with configurable strength (gentle/balanced/aggressive) to imp
 
 ## Medium Complexity
 
-### EBU R128 Loudness Normalization
-**Source:** Hyprnote
-
-Normalize audio volume levels before feeding to Whisper. Improves accuracy on quiet speech and reduces sensitivity to mic gain settings. Target -23 LUFS with true peak limiting (10ms lookahead window).
-
-**Implementation:** Add a normalization pass in `process_recording` before VAD. Calculate integrated loudness, apply gain. Can use existing `hound` crate for audio manipulation. Hyprnote's approach: recalculate gain every 512 samples with a circular buffer limiter.
-
-**Reference values:** Minute uses FFmpeg two-pass loudnorm with `I=-16:TP=-1.5:LRA=11`.
+### ~~EBU R128 Loudness Normalization~~ ✓ Done (v0.2.14)
+Implemented via `ebur128` crate, targeting -16 LUFS. Both channels normalized before VAD and Whisper. Hard limiter clamps to ±1.0. Debug WAVs saved pre/post normalization.
 
 ### Neural VAD (Silero / ONNX)
 **Source:** Hyprnote
@@ -52,20 +46,16 @@ Replace energy-based RMS VAD (`src-tauri/src/audio/vad.rs`) with ML-based Silero
 ### Adaptive AEC Bypass
 **Source:** Project Raven
 
-Once echo cancellation is implemented, monitor its health metrics (drift >200ms, overflow rates >=10 per check, pipeline stalls) and automatically bypass when AEC is degrading quality. Re-enable after a 5-second holdoff period.
+Monitor AEC health metrics (drift, overflow rates, pipeline stalls) and automatically bypass when AEC is degrading quality. Re-enable after a holdoff period.
 
-**Implementation:** Only relevant after WebRTC AEC3 is integrated (see below).
+**Implementation:** Read `VoipAec3::process()` metrics; if echo return loss enhancement (ERLE) drops below threshold or delay estimate diverges, skip the AEC pass and log a warning. Only relevant once AEC quality is confirmed stable.
 
 ---
 
 ## High Complexity
 
-### WebRTC AEC3 Echo Cancellation
-**Source:** Project Raven
-
-Eliminate speaker bleed at capture time instead of relying on post-hoc deduplication. Uses the same acoustic echo cancellation technology as Chrome. Would remove the need for `deduplicate_bleed()` entirely, producing cleaner source audio for Whisper.
-
-**Implementation:** Requires GStreamer or WebRTC native library integration. Project Raven runs AEC via separate WebSocket connections for each audio stream. The adaptive bypass logic (see above) handles edge cases where AEC degrades quality.
+### ~~WebRTC AEC3 Echo Cancellation~~ ✓ Done (v0.2.16)
+Implemented via pure-Rust `aec3` crate. Detects render-ahead delay via VAD onset comparison and passes it to `VoipAec3::initial_delay_ms()`. Both channels processed at full length — no content trimming. Debug WAV saved as `mic_aec_*.wav`. `deduplicate_bleed()` remains as a safety net.
 
 ### Speaker Embedding / Clustering Diarization
 **Source:** Hyprnote, Minute
@@ -95,6 +85,7 @@ Based on impact vs. effort:
 
 1. **Quantized models** — immediate processing speed improvement, trivial to implement
 2. **Neural VAD** — biggest accuracy improvement for speech detection, medium effort
-3. **EBU R128 normalization** — improves Whisper accuracy across varying audio conditions
+3. ~~**EBU R128 normalization**~~ — ✓ done
 4. **Speaker embeddings** — enables true multi-speaker support, high effort but high value
-5. **WebRTC AEC3** — eliminates bleed at source, high effort but would simplify the pipeline
+5. ~~**WebRTC AEC3**~~ — ✓ done
+6. **Vocabulary boosting** — low effort, useful for domain-specific jargon
