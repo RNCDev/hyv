@@ -15,3 +15,6 @@ src-tauri/target/
 
 # Whisper models (large binaries)
 src-tauri/models/
+
+# Git worktrees
+.worktrees/
