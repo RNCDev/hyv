@@ -1,0 +1,305 @@
+use crate::audio::capture::{MicCapture, SystemCapture};
+use crate::audio::vad;
+use crate::output::transcript_writer;
+use crate::state::{AppState, AppStatus, ProgressPayload};
+use crate::transcription::chunker;
+use crate::transcription::engine::WhisperEngine;
+use crate::transcription::model_manager::{ModelInfo, ModelManager};
+use std::sync::atomic::Ordering;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tracing::{error, info};
+
+#[tauri::command]
+pub async fn get_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
+    Ok(state.status.lock().await.clone())
+}
+
+#[tauri::command]
+pub async fn start_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let mut status = state.status.lock().await;
+    if *status != AppStatus::Idle {
+        return Err("Cannot start recording: not idle".to_string());
+    }
+
+    // Check model is available
+    let model_mgr = ModelManager::new()?;
+    let model = ModelInfo::medium();
+    if !model_mgr.is_downloaded(&model) {
+        *status = AppStatus::ModelDownloading {
+            progress: 0.0,
+            message: "Downloading Whisper model...".to_string(),
+        };
+        emit_status(&app, &status);
+        drop(status);
+
+        // Download in background
+        let app_clone = app.clone();
+
+        tokio::spawn(async move {
+            let progress_app = app_clone.clone();
+            let result = model_mgr
+                .download(&model, move |downloaded, total| {
+                    let pct = (downloaded as f64 / total as f64) * 100.0;
+                    let msg = format!(
+                        "Downloading model: {:.0}% ({} / {} MB)",
+                        pct,
+                        downloaded / 1_000_000,
+                        total / 1_000_000
+                    );
+                    let status = AppStatus::ModelDownloading {
+                        progress: pct,
+                        message: msg,
+                    };
+                    let _ = progress_app.emit("status-changed", ProgressPayload { status });
+                })
+                .await;
+
+            let state: State<'_, AppState> = app_clone.state();
+            let mut s = state.status.lock().await;
+            match result {
+                Ok(_) => {
+                    *s = AppStatus::Idle;
+                    emit_status(&app_clone, &s);
+                    info!("Model downloaded, ready to record");
+                }
+                Err(e) => {
+                    *s = AppStatus::Error {
+                        message: format!("Model download failed: {e}"),
+                    };
+                    emit_status(&app_clone, &s);
+                    error!("Model download failed: {e}");
+                }
+            }
+        });
+
+        return Ok(());
+    }
+
+    // Clear buffers
+    state.system_buffer.lock().await.clear();
+    state.mic_buffer.lock().await.clear();
+    state.recording_active.store(true, Ordering::SeqCst);
+
+    let mic_buffer = state.mic_buffer.clone();
+    let system_buffer = state.system_buffer.clone();
+    let active = state.recording_active.clone();
+
+    // Start mic capture in a dedicated thread (CPAL uses callbacks)
+    let active_clone = active.clone();
+    std::thread::spawn(move || {
+        let mut mic = MicCapture::new();
+        if let Err(e) = mic.start(mic_buffer, active_clone.clone()) {
+            error!("Mic capture failed: {e}");
+            return;
+        }
+        while active_clone.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        mic.stop();
+    });
+
+    // System audio via Core Audio Process Tap
+    {
+        let mut sys = SystemCapture::new();
+        if let Err(e) = sys.start(system_buffer, active.clone()) {
+            // Non-fatal: app works with mic only if system audio fails
+            error!("System audio capture failed (will record mic only): {e}");
+        }
+    }
+
+    *status = AppStatus::Recording;
+    let recording_status = status.clone();
+    drop(status); // release lock before emitting
+    emit_status(&app, &recording_status);
+    info!("Recording started");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_recording(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    {
+        let status = state.status.lock().await;
+        if *status != AppStatus::Recording {
+            return Err("Not recording".to_string());
+        }
+    }
+
+    state.recording_active.store(false, Ordering::SeqCst);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let mic_audio = state.mic_buffer.lock().await.clone();
+    let system_audio = state.system_buffer.lock().await.clone();
+
+    let mic_duration = mic_audio.len() as f64 / 16000.0;
+    let sys_duration = system_audio.len() as f64 / 16000.0;
+    let duration = mic_duration.max(sys_duration);
+
+    info!(
+        mic_samples = mic_audio.len(),
+        system_samples = system_audio.len(),
+        duration = format!("{:.1}s", duration),
+        "Recording stopped, starting processing"
+    );
+
+    {
+        let mut status = state.status.lock().await;
+        *status = AppStatus::Processing {
+            progress: 0.0,
+            message: "Analyzing audio...".to_string(),
+        };
+        emit_status(&app, &status);
+    }
+
+    let app_clone = app.clone();
+
+    tokio::task::spawn_blocking(move || {
+        let result = process_recording(&mic_audio, &system_audio, duration, &app_clone);
+
+        // Use a new tokio runtime handle to update state
+        let rt = tokio::runtime::Handle::current();
+        rt.block_on(async {
+            let state: State<'_, AppState> = app_clone.state();
+            let mut status = state.status.lock().await;
+            match result {
+                Ok(path) => {
+                    info!(path = %path.display(), "Processing complete");
+                    *status = AppStatus::Idle;
+                }
+                Err(e) => {
+                    error!("Processing failed: {e}");
+                    *status = AppStatus::Error { message: e };
+                }
+            }
+            emit_status(&app_clone, &status);
+        });
+    });
+
+    Ok(())
+}
+
+fn process_recording(
+    mic_audio: &[f32],
+    system_audio: &[f32],
+    duration: f64,
+    app: &AppHandle,
+) -> Result<std::path::PathBuf, String> {
+    let sample_rate = 16000u32;
+
+    let model_mgr = ModelManager::new()?;
+    let model_info = ModelInfo::medium();
+    let model_path = model_mgr.model_path(&model_info);
+    let engine = WhisperEngine::new(&model_path)?;
+
+    let mut all_segments = Vec::new();
+
+    // Process mic channel
+    if !mic_audio.is_empty() {
+        update_progress(app, 0.0, "Analyzing microphone audio...");
+        let mic_speech = vad::find_speech_segments(mic_audio, sample_rate, 0.3, 0.002, 1.0);
+        info!(segments = mic_speech.len(), "Mic VAD complete");
+
+        let mic_chunks = chunker::chunk_speech(mic_audio, &mic_speech, sample_rate);
+        if !mic_chunks.is_empty() {
+            update_progress(
+                app,
+                10.0,
+                &format!("Transcribing mic ({} chunks)...", mic_chunks.len()),
+            );
+            let mic_segments =
+                engine.transcribe_channel(&mic_chunks, "Me", sample_rate, |done, total| {
+                    let pct = 10.0 + (done as f64 / total as f64) * 40.0;
+                    update_progress(app, pct, &format!("Transcribing mic: {done}/{total}"));
+                })?;
+            all_segments.extend(mic_segments);
+        }
+    }
+
+    // Process system channel
+    if !system_audio.is_empty() {
+        update_progress(app, 50.0, "Analyzing system audio...");
+        let sys_speech = vad::find_speech_segments(system_audio, sample_rate, 0.3, 0.002, 1.0);
+        info!(segments = sys_speech.len(), "System VAD complete");
+
+        let sys_chunks = chunker::chunk_speech(system_audio, &sys_speech, sample_rate);
+        if !sys_chunks.is_empty() {
+            update_progress(
+                app,
+                55.0,
+                &format!("Transcribing system ({} chunks)...", sys_chunks.len()),
+            );
+            let sys_segments =
+                engine.transcribe_channel(&sys_chunks, "Remote", sample_rate, |done, total| {
+                    let pct = 55.0 + (done as f64 / total as f64) * 40.0;
+                    update_progress(
+                        app,
+                        pct,
+                        &format!("Transcribing system: {done}/{total}"),
+                    );
+                })?;
+            all_segments.extend(sys_segments);
+        }
+    }
+
+    update_progress(app, 95.0, "Writing transcript...");
+    let path = transcript_writer::write_transcript(&mut all_segments, duration)?;
+    update_progress(app, 100.0, "Done");
+    Ok(path)
+}
+
+fn update_progress(app: &AppHandle, progress: f64, message: &str) {
+    let _ = app.emit(
+        "status-changed",
+        ProgressPayload {
+            status: AppStatus::Processing {
+                progress,
+                message: message.to_string(),
+            },
+        },
+    );
+}
+
+fn emit_status(app: &AppHandle, status: &AppStatus) {
+    let _ = app.emit(
+        "status-changed",
+        ProgressPayload {
+            status: status.clone(),
+        },
+    );
+}
+
+#[tauri::command]
+pub async fn get_recent_transcripts() -> Result<Vec<String>, String> {
+    let desktop = dirs::desktop_dir().ok_or("Cannot find Desktop")?;
+    let mut transcripts: Vec<(String, std::time::SystemTime)> = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&desktop) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("Hyv_Transcript_") && name.ends_with(".txt") {
+                if let Ok(meta) = entry.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        transcripts.push((entry.path().to_string_lossy().to_string(), modified));
+                    }
+                }
+            }
+        }
+    }
+
+    transcripts.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(transcripts.into_iter().take(5).map(|(p, _)| p).collect())
+}
+
+#[tauri::command]
+pub async fn open_transcript(path: String) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(&path)
+        .spawn()
+        .map_err(|e| format!("Failed to open file: {e}"))?;
+    Ok(())
+}

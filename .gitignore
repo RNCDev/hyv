@@ -1,16 +1,3 @@
-# Xcode
-*.xcodeproj/
-*.xcworkspace/
-xcuserdata/
-DerivedData/
-build/
-*.pbxuser
-*.mode1v3
-*.mode2v3
-*.perspectivev3
-*.xccheckout
-*.moved-aside
-
 # macOS
 .DS_Store
 .AppleDouble
@@ -19,8 +6,12 @@ build/
 # Environment
 .env
 
-# Swift Package Manager
-.build/
-.swiftpm/
-Packages/
-Package.resolved
+# Node
+node_modules/
+dist/
+
+# Rust / Cargo
+src-tauri/target/
+
+# Whisper models (large binaries)
+src-tauri/models/

@@ -1,82 +1,64 @@
 # Hyv
 
-A macOS menu bar app that records both sides of a meeting (system audio + microphone) as separate channels, then produces speaker-labeled transcription documents on your Desktop.
+A macOS menu bar app that records both sides of a meeting (system audio + microphone) and produces speaker-labeled transcripts on your Desktop using on-device Whisper.
 
 ## How it works
 
-1. **Records dual audio** — captures system audio (remote participants) via ScreenCaptureKit and your microphone via AVCaptureSession into a stereo WAV
-2. **Splits channels** — separates your voice (mic, channel 1) from remote audio (system, channel 0)
-3. **Transcribes your voice** — energy-based VAD on mic channel, segments sent to Cohere API → labeled "Me"
-4. **Diarizes remote speakers** — runs pyannote.audio on system channel to identify who spoke when
-5. **Transcribes remote segments** — each diarized segment sent to Cohere API → labeled "Remote" or "Remote (SPEAKER_XX)"
-6. **Writes transcript** — merges all segments by timestamp into a `.txt` file on your Desktop
+1. **Records dual audio** — captures system audio (remote participants) via Core Audio Process Tap and your microphone via CPAL
+2. **Runs VAD** — energy-based voice activity detection on both channels to find speech segments
+3. **Transcribes locally** — runs Whisper (medium model, on-device via Metal) on each channel
+4. **Labels speakers** — mic channel → "Me", system channel → "Remote"
+5. **Writes transcript** — merges segments by timestamp into a `.txt` file on your Desktop
 
-Processing happens after the recording stops. Accuracy over speed — a 30-minute meeting takes roughly 30 minutes to process.
+Processing happens after recording stops. First run downloads the Whisper medium model (~1.5GB) automatically.
 
 ## Requirements
 
 - macOS 14.0+ (Apple Silicon)
-- Xcode 16+
-- Python 3.10+
-- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
-- [FFmpeg](https://ffmpeg.org/) (`brew install ffmpeg`)
-- [Cohere API key](https://dashboard.cohere.com/api-keys)
-- [HuggingFace token](https://huggingface.co/settings/tokens) with access to pyannote gated models
+- Rust (via `rustup`)
+- Node.js 18+
+- Tauri CLI (`cargo install tauri-cli`)
 
 ## Setup
 
 ```bash
 git clone https://github.com/your-username/hyv.git
 cd hyv
-
-# Run setup script
-./scripts/setup.sh
-
-# Add your API keys to .env
-COHERE_TRIAL_API_KEY=your-key
-HF_TOKEN=your-token
+npm install
 ```
-
-### HuggingFace model access
-
-Accept the license for each gated model (use the same account as your `HF_TOKEN`):
-- [pyannote/segmentation-3.0](https://hf.co/pyannote/segmentation-3.0)
-- [pyannote/speaker-diarization-3.1](https://hf.co/pyannote/speaker-diarization-3.1)
 
 ## Build & Run
 
-### From the command line
 ```bash
-xcodebuild -project Hyv.xcodeproj -scheme Hyv -configuration Debug build SYMROOT=build
-open build/Debug/Hyv.app
-```
+# Development
+npm run tauri dev
 
-### From Xcode
-```bash
-open Hyv.xcodeproj
-# Press Cmd+R to build and run
+# Production build
+npm run tauri build
 ```
 
 On first launch, grant **Screen & System Audio Recording** and **Microphone** permissions in System Settings > Privacy & Security.
 
+On first recording, the Whisper medium model (~1.5GB) downloads automatically. The status bar will show download progress. Click Start Recording again once it returns to "Ready to record."
+
 ## Usage
 
-1. The app runs as a menu bar icon (waveform)
-2. Click the icon and press **Start Recording** when your meeting begins
-3. When the meeting ends, click **Stop Recording**
-4. Wait for processing — a transcript file appears on your Desktop
+1. App runs as a menu bar icon — click it to open the panel
+2. Click **Start Recording** when your meeting begins
+3. Click **Stop Recording** when done
+4. Processing runs locally — transcript appears on your Desktop when complete
 
 ### Output format
+
 ```
 === Hyv Transcript ===
 Date: March 27, 2026 at 3:27 PM
 Duration: 30:00
-Speakers: 3
+Speakers: 2
 ========================
 
-[00:03] Remote (SPEAKER_00): This is like all the rage, man.
-[00:08] Me: Yeah, I agree.
-[00:15] Remote (SPEAKER_01): Anyways, go ahead.
+[00:03] Remote: Hello, can you hear me?
+[00:08] Me: Yeah, loud and clear.
 ...
 
 === End of Transcript ===
@@ -86,26 +68,24 @@ Speakers: 3
 
 ```
 During recording:
-  ScreenCaptureKit (system audio) ──→ stereo WAV (ch0=remote, ch1=mic)
-  AVCaptureSession (microphone)   ──→
+  Core Audio Process Tap (system audio) ──→ ring buffer → shared Vec<f32>
+  CPAL (microphone)                     ──→ CPAL callback → shared Vec<f32>
 
 After recording:
-  ch1 (mic)    → VAD → Cohere API → "Me"
-  ch0 (system) → pyannote → Cohere API → "Remote" / "Remote (SPEAKER_XX)"
-  → merge by timestamp → transcript file
+  mic buffer    → VAD → Whisper (Metal) → "Me" segments
+  system buffer → VAD → Whisper (Metal) → "Remote" segments
+  → merge by timestamp → transcript .txt on Desktop
 ```
+
+**Stack:** Tauri 2 + React/TypeScript frontend, Rust backend, whisper-rs (Metal), cidre (Core Audio), CPAL
 
 ## Debugging
 
-All services log to `os.Logger` (subsystem `com.hyv.app`). Stream logs live:
-
 ```bash
-/usr/bin/log show --predicate 'subsystem == "com.hyv.app"' --last 1h --info
+RUST_LOG=debug npm run tauri dev
 ```
 
-Or open Console.app and filter by subsystem `com.hyv.app`.
-
-See [CLAUDE.md](CLAUDE.md) for detailed project structure and [xcode-build-deploy.md](xcode-build-deploy.md) for the full build & deploy guide.
+See [CLAUDE.md](CLAUDE.md) for full project structure and architecture details.
 
 ## License
 
