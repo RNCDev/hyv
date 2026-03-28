@@ -1,4 +1,5 @@
 use crate::audio::capture::{MicCapture, SystemCapture};
+use crate::audio::normalize;
 use crate::audio::vad;
 use crate::debug;
 use crate::output::transcript_writer;
@@ -220,6 +221,15 @@ fn process_recording(
     debug::save_audio(mic_audio, "mic");
     debug::save_audio(system_audio, "system");
 
+    // Normalize both channels to -16 LUFS before VAD and Whisper.
+    // Ensures consistent energy levels for the VAD threshold and improves
+    // Whisper accuracy on quiet speech.
+    const TARGET_LUFS: f64 = -16.0;
+    let mic_audio = normalize::normalize_loudness(mic_audio, SAMPLE_RATE, TARGET_LUFS);
+    let system_audio = normalize::normalize_loudness(system_audio, SAMPLE_RATE, TARGET_LUFS);
+    debug::save_audio(&mic_audio, "mic_normalized");
+    debug::save_audio(&system_audio, "system_normalized");
+
     let model_mgr = ModelManager::new()?;
     let model_info = ModelInfo::medium();
     let model_path = model_mgr.model_path(&model_info);
@@ -230,7 +240,7 @@ fn process_recording(
     if !mic_audio.is_empty() {
         update_progress(app, 0.0, "Analyzing microphone audio...");
         let mic_segments = process_channel(
-            mic_audio,
+            &mic_audio,
             "Speaker 1",
             PROGRESS_MIC_START,
             PROGRESS_MIC_RANGE,
@@ -243,7 +253,7 @@ fn process_recording(
     if !system_audio.is_empty() {
         update_progress(app, 50.0, "Analyzing system audio...");
         let sys_segments = process_channel(
-            system_audio,
+            &system_audio,
             "Speaker 2",
             PROGRESS_SYS_START,
             PROGRESS_SYS_RANGE,
