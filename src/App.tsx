@@ -10,7 +10,7 @@ function App() {
     <div style={styles.container}>
       <div style={styles.header}>
         <span style={styles.logo}>Hyv</span>
-        <span style={styles.version}>v0.2.1</span>
+        <span style={styles.version}>v0.2.11</span>
       </div>
 
       <StatusIndicator status={status} recordingTime={recordingTime} formatTime={formatTime} />

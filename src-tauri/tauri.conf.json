@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicepage/nicepage/master/tauri.conf.json",
   "productName": "Hyv",
-  "version": "0.2.1",
+  "version": "0.2.11",
   "identifier": "com.hyv.app",
   "build": {
     "beforeDevCommand": "npm run dev",

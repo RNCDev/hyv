@@ -34,7 +34,7 @@ pub fn run() {
                 app.set_activation_policy(ActivationPolicy::Accessory);
             }
 
-            tracing::info!("Hyv v0.2.1 started");
+            tracing::info!("Hyv v0.2.11 started");
             Ok(())
         })
         .on_tray_icon_event(|app, event| {
