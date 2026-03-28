@@ -268,6 +268,8 @@ curl ... | sh             # Rust via rustup
 - **System audio failure is silent** — user not notified if tap fails (mic-only fallback)
 - **`rubato` imported but unused** — linear resampling used instead (lower quality)
 
+See [docs/future-improvements.md](docs/future-improvements.md) for planned enhancements sourced from reference repositories.
+
 ---
 
 ## Design Principles
