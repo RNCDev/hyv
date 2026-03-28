@@ -1,6 +1,6 @@
 [package]
 name = "hyv"
-version = "0.2.15"
+version = "0.2.16"
 description = "macOS meeting transcription app"
 edition = "2024"
 
@@ -21,6 +21,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 ebur128 = "0.1"
+aec3 = "0.1"
 cpal = "0.15"
 ringbuf = "0.4"
 rubato = "0.16"

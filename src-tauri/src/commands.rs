@@ -1,3 +1,4 @@
+use crate::audio::aec;
 use crate::audio::capture::{MicCapture, SystemCapture};
 use crate::audio::normalize;
 use crate::audio::vad;
@@ -229,6 +230,19 @@ fn process_recording(
     let system_audio = normalize::normalize_loudness(system_audio, SAMPLE_RATE, TARGET_LUFS);
     debug::save_audio(&mic_audio, "mic_normalized");
     debug::save_audio(&system_audio, "system_normalized");
+
+    // Sample-level alignment + echo cancellation.
+    // Align both buffers so their first speech onset is synchronised, then
+    // subtract the system audio (far-end/reference) from the mic (near-end/capture)
+    // so only the user's voice remains in Speaker 1 before Whisper runs.
+    let (mic_audio, system_audio) = aec::align_buffers(&mic_audio, &system_audio);
+    let mic_audio = if !system_audio.is_empty() {
+        let cleaned = aec::cancel_echo(&mic_audio, &system_audio);
+        debug::save_audio(&cleaned, "mic_aec");
+        cleaned
+    } else {
+        mic_audio
+    };
 
     let model_mgr = ModelManager::new()?;
     let model_info = ModelInfo::medium();
