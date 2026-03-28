@@ -17,10 +17,12 @@ pub fn write_transcript(
     // Sort by start time
     segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
 
-    // Collect unique speakers
-    let mut speakers: Vec<String> = segments.iter().map(|s| s.speaker.clone()).collect();
-    speakers.sort();
-    speakers.dedup();
+    // Count unique speakers
+    let speaker_count = segments
+        .iter()
+        .map(|s| s.speaker.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
 
     let mut file =
         std::fs::File::create(&path).map_err(|e| format!("Failed to create transcript: {e}"))?;
@@ -32,7 +34,7 @@ pub fn write_transcript(
     writeln!(file, "=== Hyv Transcript ===").ok();
     writeln!(file, "Date: {date_str}").ok();
     writeln!(file, "Duration: {duration_str}").ok();
-    writeln!(file, "Speakers: {}", speakers.len()).ok();
+    writeln!(file, "Speakers: {speaker_count}").ok();
     writeln!(file, "========================").ok();
     writeln!(file).ok();
 

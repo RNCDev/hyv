@@ -10,13 +10,6 @@ impl SpeechSegment {
         self.start_sample as f64 / sample_rate as f64
     }
 
-    pub fn end_secs(&self, sample_rate: u32) -> f64 {
-        self.end_sample as f64 / sample_rate as f64
-    }
-
-    pub fn duration_secs(&self, sample_rate: u32) -> f64 {
-        self.end_secs(sample_rate) - self.start_secs(sample_rate)
-    }
 }
 
 /// Energy-based Voice Activity Detection.

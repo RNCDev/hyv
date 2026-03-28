@@ -38,7 +38,6 @@ impl WhisperEngine {
     pub fn transcribe_chunk(
         &self,
         chunk: &AudioChunk,
-        _sample_rate: u32,
     ) -> Result<Vec<TranscribedSegment>, String> {
         info!(
             chunk = chunk.index + 1,
@@ -110,7 +109,6 @@ impl WhisperEngine {
         &self,
         chunks: &[AudioChunk],
         speaker: &str,
-        sample_rate: u32,
         progress: F,
     ) -> Result<Vec<TranscribedSegment>, String>
     where
@@ -119,7 +117,7 @@ impl WhisperEngine {
         let mut all_segments = Vec::new();
 
         for (i, chunk) in chunks.iter().enumerate() {
-            let mut segments = self.transcribe_chunk(chunk, sample_rate)?;
+            let mut segments = self.transcribe_chunk(chunk)?;
             for seg in &mut segments {
                 seg.speaker = speaker.to_string();
             }

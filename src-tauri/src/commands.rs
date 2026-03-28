@@ -3,11 +3,20 @@ use crate::audio::vad;
 use crate::output::transcript_writer;
 use crate::state::{AppState, AppStatus, ProgressPayload};
 use crate::transcription::chunker;
-use crate::transcription::engine::WhisperEngine;
+use crate::transcription::engine::{TranscribedSegment, WhisperEngine};
 use crate::transcription::model_manager::{ModelInfo, ModelManager};
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info};
+
+const SAMPLE_RATE: u32 = 16000;
+const VAD_ENERGY_THRESHOLD: f32 = 0.002;
+const VAD_MIN_DURATION: f64 = 0.3;
+const VAD_MERGE_GAP: f64 = 1.0;
+const PROGRESS_MIC_START: f64 = 10.0;
+const PROGRESS_MIC_RANGE: f64 = 40.0;
+const PROGRESS_SYS_START: f64 = 55.0;
+const PROGRESS_SYS_RANGE: f64 = 40.0;
 
 #[tauri::command]
 pub async fn get_status(state: State<'_, AppState>) -> Result<AppStatus, String> {
@@ -119,7 +128,7 @@ pub async fn start_recording(
 
     // System audio via Core Audio Process Tap
     {
-        let mut sys = SystemCapture::new();
+        let sys = SystemCapture::new();
         if let Err(e) = sys.start(system_buffer, active.clone()) {
             // Non-fatal: app works with mic only if system audio fails
             error!("System audio capture failed (will record mic only): {e}");
@@ -149,8 +158,8 @@ pub async fn stop_recording(
     state.recording_active.store(false, Ordering::SeqCst);
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-    let mic_audio = state.mic_buffer.lock().await.clone();
-    let system_audio = state.system_buffer.lock().await.clone();
+    let mic_audio = std::mem::take(&mut *state.mic_buffer.lock().await);
+    let system_audio = std::mem::take(&mut *state.system_buffer.lock().await);
 
     let mic_duration = mic_audio.len() as f64 / 16000.0;
     let sys_duration = system_audio.len() as f64 / 16000.0;
@@ -205,8 +214,6 @@ fn process_recording(
     duration: f64,
     app: &AppHandle,
 ) -> Result<std::path::PathBuf, String> {
-    let sample_rate = 16000u32;
-
     let model_mgr = ModelManager::new()?;
     let model_info = ModelInfo::medium();
     let model_path = model_mgr.model_path(&model_info);
@@ -214,58 +221,70 @@ fn process_recording(
 
     let mut all_segments = Vec::new();
 
-    // Process mic channel
     if !mic_audio.is_empty() {
         update_progress(app, 0.0, "Analyzing microphone audio...");
-        let mic_speech = vad::find_speech_segments(mic_audio, sample_rate, 0.3, 0.002, 1.0);
-        info!(segments = mic_speech.len(), "Mic VAD complete");
-
-        let mic_chunks = chunker::chunk_speech(mic_audio, &mic_speech, sample_rate);
-        if !mic_chunks.is_empty() {
-            update_progress(
-                app,
-                10.0,
-                &format!("Transcribing mic ({} chunks)...", mic_chunks.len()),
-            );
-            let mic_segments =
-                engine.transcribe_channel(&mic_chunks, "Me", sample_rate, |done, total| {
-                    let pct = 10.0 + (done as f64 / total as f64) * 40.0;
-                    update_progress(app, pct, &format!("Transcribing mic: {done}/{total}"));
-                })?;
-            all_segments.extend(mic_segments);
-        }
+        let mic_segments = process_channel(
+            mic_audio,
+            "Me",
+            PROGRESS_MIC_START,
+            PROGRESS_MIC_RANGE,
+            &engine,
+            app,
+        )?;
+        all_segments.extend(mic_segments);
     }
 
-    // Process system channel
     if !system_audio.is_empty() {
         update_progress(app, 50.0, "Analyzing system audio...");
-        let sys_speech = vad::find_speech_segments(system_audio, sample_rate, 0.3, 0.002, 1.0);
-        info!(segments = sys_speech.len(), "System VAD complete");
-
-        let sys_chunks = chunker::chunk_speech(system_audio, &sys_speech, sample_rate);
-        if !sys_chunks.is_empty() {
-            update_progress(
-                app,
-                55.0,
-                &format!("Transcribing system ({} chunks)...", sys_chunks.len()),
-            );
-            let sys_segments =
-                engine.transcribe_channel(&sys_chunks, "Remote", sample_rate, |done, total| {
-                    let pct = 55.0 + (done as f64 / total as f64) * 40.0;
-                    update_progress(
-                        app,
-                        pct,
-                        &format!("Transcribing system: {done}/{total}"),
-                    );
-                })?;
-            all_segments.extend(sys_segments);
-        }
+        let sys_segments = process_channel(
+            system_audio,
+            "Remote",
+            PROGRESS_SYS_START,
+            PROGRESS_SYS_RANGE,
+            &engine,
+            app,
+        )?;
+        all_segments.extend(sys_segments);
     }
 
     update_progress(app, 95.0, "Writing transcript...");
     let path = transcript_writer::write_transcript(&mut all_segments, duration)?;
     update_progress(app, 100.0, "Done");
     Ok(path)
+}
+
+fn process_channel(
+    audio: &[f32],
+    speaker: &str,
+    progress_start: f64,
+    progress_range: f64,
+    engine: &WhisperEngine,
+    app: &AppHandle,
+) -> Result<Vec<TranscribedSegment>, String> {
+    let speech = vad::find_speech_segments(
+        audio,
+        SAMPLE_RATE,
+        VAD_MIN_DURATION,
+        VAD_ENERGY_THRESHOLD,
+        VAD_MERGE_GAP,
+    );
+    info!(segments = speech.len(), speaker, "VAD complete");
+
+    let chunks = chunker::chunk_speech(audio, &speech, SAMPLE_RATE);
+    if chunks.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    update_progress(
+        app,
+        progress_start,
+        &format!("Transcribing {speaker} ({} chunks)...", chunks.len()),
+    );
+
+    engine.transcribe_channel(&chunks, speaker, |done, total| {
+        let pct = progress_start + (done as f64 / total as f64) * progress_range;
+        update_progress(app, pct, &format!("Transcribing {speaker}: {done}/{total}"));
+    })
 }
 
 fn update_progress(app: &AppHandle, progress: f64, message: &str) {

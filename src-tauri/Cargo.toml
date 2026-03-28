@@ -1,6 +1,6 @@
 [package]
 name = "hyv"
-version = "0.2.11"
+version = "0.2.14"
 description = "macOS meeting transcription app"
 edition = "2024"
 

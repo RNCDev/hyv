@@ -26,16 +26,6 @@ impl ModelInfo {
         }
     }
 
-    pub fn small() -> Self {
-        Self {
-            name: "small".to_string(),
-            filename: "ggml-small.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
-                .to_string(),
-            size_bytes: 487_601_003,
-            sha256: None,
-        }
-    }
 }
 
 pub struct ModelManager {
@@ -89,7 +79,10 @@ impl ModelManager {
             "Downloading model"
         );
 
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
         let response = client
             .get(&model.url)
             .send()
@@ -114,10 +107,11 @@ impl ModelManager {
             progress(downloaded, total);
         }
 
-        // Rename temp to final
-        tokio::fs::rename(&temp_path, &path)
-            .await
-            .map_err(|e| format!("Failed to finalize model file: {e}"))?;
+        // Rename temp to final; clean up temp file if rename fails
+        if let Err(e) = tokio::fs::rename(&temp_path, &path).await {
+            let _ = tokio::fs::remove_file(&temp_path).await;
+            return Err(format!("Failed to finalize model file: {e}"));
+        }
 
         info!(
             model = %model.name,

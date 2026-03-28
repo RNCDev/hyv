@@ -4,6 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info};
+#[cfg(not(target_os = "macos"))]
+use tracing::warn;
 
 const TARGET_SAMPLE_RATE: u32 = 16000;
 
@@ -177,6 +179,8 @@ mod core_audio_tap {
         format: arc::R<av::AudioFormat>,
         producer: HeapProd<f32>,
         should_terminate: Arc<AtomicBool>,
+        // Kept to maintain the Arc refcount shared with SystemAudioCapture.
+        #[allow(dead_code)]
         sample_rate: Arc<AtomicU32>,
         consecutive_drops: u32,
     }
@@ -378,21 +382,15 @@ mod core_audio_tap {
 
 // ─── Public SystemCapture wrapper ─────────────────────────────────────────────
 
-pub struct SystemCapture {
-    #[cfg(target_os = "macos")]
-    inner: Option<core_audio_tap::SystemAudioCapture>,
-}
+pub struct SystemCapture;
 
 impl SystemCapture {
     pub fn new() -> Self {
-        Self {
-            #[cfg(target_os = "macos")]
-            inner: None,
-        }
+        Self
     }
 
     pub fn start(
-        &mut self,
+        &self,
         buffer: Arc<Mutex<Vec<f32>>>,
         active: Arc<AtomicBool>,
     ) -> Result<(), String> {
@@ -432,11 +430,4 @@ impl SystemCapture {
         Ok(())
     }
 
-    pub fn stop(&mut self) {
-        #[cfg(target_os = "macos")]
-        {
-            self.inner = None;
-        }
-        info!("System audio capture stopped");
-    }
 }
