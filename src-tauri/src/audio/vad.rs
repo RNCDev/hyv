@@ -25,9 +25,14 @@ pub fn find_speech_segments(
     let hop = frame_len;
     let n_frames = audio.len() / hop;
 
+    // How many silent frames to tolerate before closing a segment (200ms hangover).
+    // Prevents trailing low-energy consonants and word endings from being clipped.
+    let hangover_frames = (0.2_f64 / 0.03_f64).ceil() as usize; // ~7 frames
+
     let mut segments: Vec<SpeechSegment> = Vec::new();
     let mut in_speech = false;
     let mut start_sample: usize = 0;
+    let mut silent_frames: usize = 0;
 
     for i in 0..n_frames {
         let frame_start = i * hop;
@@ -37,28 +42,43 @@ pub fn find_speech_segments(
         // RMS energy
         let energy: f32 = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
 
-        if energy > energy_threshold && !in_speech {
-            in_speech = true;
-            start_sample = frame_start;
-        } else if energy <= energy_threshold && in_speech {
-            in_speech = false;
-            let duration = (frame_start - start_sample) as f64 / sample_rate as f64;
-            if duration >= min_duration {
-                segments.push(SpeechSegment {
-                    start_sample,
-                    end_sample: frame_start,
-                });
+        if energy > energy_threshold {
+            if !in_speech {
+                in_speech = true;
+                start_sample = frame_start;
+            }
+            silent_frames = 0;
+        } else if in_speech {
+            silent_frames += 1;
+            if silent_frames >= hangover_frames {
+                in_speech = false;
+                silent_frames = 0;
+                // End the segment at the last voiced frame, not where silence started
+                let end_sample = frame_start.saturating_sub((hangover_frames - 1) * hop);
+                let duration = end_sample.saturating_sub(start_sample) as f64 / sample_rate as f64;
+                if duration >= min_duration {
+                    segments.push(SpeechSegment {
+                        start_sample,
+                        end_sample,
+                    });
+                }
             }
         }
     }
 
-    // Handle trailing speech
+    // Handle trailing speech (still in hangover or active)
     if in_speech {
-        let duration = (audio.len() - start_sample) as f64 / sample_rate as f64;
+        let end_sample = if silent_frames > 0 {
+            // We were in hangover — end at last voiced frame
+            (n_frames * hop).saturating_sub(silent_frames * hop)
+        } else {
+            audio.len()
+        };
+        let duration = end_sample.saturating_sub(start_sample) as f64 / sample_rate as f64;
         if duration >= min_duration {
             segments.push(SpeechSegment {
                 start_sample,
-                end_sample: audio.len(),
+                end_sample,
             });
         }
     }

@@ -1,10 +1,12 @@
 use crate::audio::capture::{MicCapture, SystemCapture};
 use crate::audio::vad;
+use crate::debug;
 use crate::output::transcript_writer;
 use crate::state::{AppState, AppStatus, ProgressPayload};
 use crate::transcription::chunker;
 use crate::transcription::engine::{TranscribedSegment, WhisperEngine};
 use crate::transcription::model_manager::{ModelInfo, ModelManager};
+use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{error, info};
@@ -214,6 +216,10 @@ fn process_recording(
     duration: f64,
     app: &AppHandle,
 ) -> Result<std::path::PathBuf, String> {
+    // Save raw audio for debugging before any processing
+    debug::save_audio(mic_audio, "mic");
+    debug::save_audio(system_audio, "system");
+
     let model_mgr = ModelManager::new()?;
     let model_info = ModelInfo::medium();
     let model_path = model_mgr.model_path(&model_info);
@@ -246,6 +252,11 @@ fn process_recording(
         )?;
         all_segments.extend(sys_segments);
     }
+
+    // Save pre-dedup segments so we can inspect what Whisper produced
+    debug::save_segments(&all_segments, "segments_raw");
+
+    let mut all_segments = deduplicate_bleed(all_segments);
 
     update_progress(app, 95.0, "Writing transcript...");
     let path = transcript_writer::write_transcript(&mut all_segments, duration)?;
@@ -285,6 +296,63 @@ fn process_channel(
         let pct = progress_start + (done as f64 / total as f64) * progress_range;
         update_progress(app, pct, &format!("Transcribing {speaker}: {done}/{total}"));
     })
+}
+
+fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
+    const TIME_WINDOW: f64 = 3.0;
+    const SIMILARITY_THRESHOLD: f64 = 0.65;
+
+    let has_remote = segments.iter().any(|s| s.speaker == "Remote");
+    if !has_remote {
+        return segments;
+    }
+
+    fn word_set(text: &str) -> HashSet<String> {
+        text.chars()
+            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase()
+            .split_whitespace()
+            .map(String::from)
+            .collect()
+    }
+
+    fn overlap_ratio(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
+        let min_len = a.len().min(b.len());
+        if min_len == 0 {
+            return 0.0;
+        }
+        a.intersection(b).count() as f64 / min_len as f64
+    }
+
+    // Pre-compute remote word sets to avoid redundant tokenization
+    let remote_entries: Vec<(f64, HashSet<String>)> = segments
+        .iter()
+        .filter(|s| s.speaker == "Remote")
+        .map(|s| (s.start, word_set(&s.text)))
+        .collect();
+
+    let mut dropped = 0usize;
+    let mut result = Vec::with_capacity(segments.len());
+    for seg in segments {
+        if seg.speaker != "Me" {
+            result.push(seg);
+            continue;
+        }
+        let me_words = word_set(&seg.text);
+        let is_bleed = remote_entries.iter().any(|(r_start, r_words)| {
+            (r_start - seg.start).abs() <= TIME_WINDOW
+                && overlap_ratio(&me_words, r_words) > SIMILARITY_THRESHOLD
+        });
+        if is_bleed {
+            dropped += 1;
+        } else {
+            result.push(seg);
+        }
+    }
+
+    info!(dropped, "Deduplication: removed bleed-through Me segments");
+    result
 }
 
 fn update_progress(app: &AppHandle, progress: f64, message: &str) {

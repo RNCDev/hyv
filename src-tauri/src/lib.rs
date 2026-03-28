@@ -1,5 +1,6 @@
 mod audio;
 mod commands;
+mod debug;
 mod output;
 mod platform;
 mod state;
@@ -18,11 +19,26 @@ fn focus_window(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Set up log directory: ~/Library/Logs/Hyv/
+    let log_dir = dirs::home_dir()
+        .map(|h| h.join("Library/Logs/Hyv"))
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp/Hyv"));
+    let _ = std::fs::create_dir_all(&log_dir);
+
+    // Rolling file appender: one file per day, kept for 7 days
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "hyv.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+        .with_env_filter(filter)
+        .with_writer(non_blocking)
+        .with_ansi(false) // no colour codes in log files
         .init();
+
+    // Keep _guard alive for the process lifetime
+    std::mem::forget(_guard);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -35,6 +51,7 @@ pub fn run() {
             }
 
             tracing::info!("Hyv v{} started", env!("CARGO_PKG_VERSION"));
+            crate::debug::prune_old_files(7);
             Ok(())
         })
         .on_tray_icon_event(|app, event| {

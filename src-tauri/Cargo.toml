@@ -1,6 +1,6 @@
 [package]
 name = "hyv"
-version = "0.2.14"
+version = "0.2.15"
 description = "macOS meeting transcription app"
 edition = "2024"
 
@@ -19,6 +19,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 cpal = "0.15"
 ringbuf = "0.4"
 rubato = "0.16"
