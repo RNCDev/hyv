@@ -301,13 +301,17 @@ fn process_channel(
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
     const TIME_WINDOW: f64 = 3.0;
     const SIMILARITY_THRESHOLD: f64 = 0.65;
+    // Short "Me" segments (≤ this many words) are never dropped — they're
+    // likely genuine brief responses ("Sure", "Cool", "Thanks") that would
+    // false-positive against any nearby Remote segment.
+    const MIN_WORDS_TO_DEDUP: usize = 4;
 
     let has_remote = segments.iter().any(|s| s.speaker == "Remote");
     if !has_remote {
         return segments;
     }
 
-    fn word_set(text: &str) -> HashSet<String> {
+    fn words(text: &str) -> Vec<String> {
         text.chars()
             .filter(|c| c.is_alphanumeric() || c.is_whitespace())
             .collect::<String>()
@@ -317,19 +321,14 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
             .collect()
     }
 
-    fn overlap_ratio(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
-        let min_len = a.len().min(b.len());
-        if min_len == 0 {
-            return 0.0;
-        }
-        a.intersection(b).count() as f64 / min_len as f64
-    }
-
-    // Pre-compute remote word sets to avoid redundant tokenization
-    let remote_entries: Vec<(f64, HashSet<String>)> = segments
+    // Pre-compute remote data: (start, end, word set)
+    let remote_entries: Vec<(f64, f64, HashSet<String>)> = segments
         .iter()
         .filter(|s| s.speaker == "Remote")
-        .map(|s| (s.start, word_set(&s.text)))
+        .map(|s| {
+            let ws: HashSet<String> = words(&s.text).into_iter().collect();
+            (s.start, s.end, ws)
+        })
         .collect();
 
     let mut dropped = 0usize;
@@ -339,13 +338,48 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
             result.push(seg);
             continue;
         }
-        let me_words = word_set(&seg.text);
-        let is_bleed = remote_entries.iter().any(|(r_start, r_words)| {
-            (r_start - seg.start).abs() <= TIME_WINDOW
-                && overlap_ratio(&me_words, r_words) > SIMILARITY_THRESHOLD
-        });
-        if is_bleed {
+
+        let me_words = words(&seg.text);
+        let me_set: HashSet<String> = me_words.iter().cloned().collect();
+
+        // Short responses are always kept
+        if me_set.len() <= MIN_WORDS_TO_DEDUP {
+            result.push(seg);
+            continue;
+        }
+
+        // Gather the union of all Remote words from segments that overlap in
+        // time (within TIME_WINDOW of the Me segment's start OR end). This
+        // handles the case where a long Me segment spans multiple short Remote
+        // segments — we check against the combined Remote content.
+        let mut remote_union: HashSet<String> = HashSet::new();
+        for (r_start, r_end, r_words) in &remote_entries {
+            let time_overlap = (r_start - seg.start).abs() <= TIME_WINDOW
+                || (r_end - seg.end).abs() <= TIME_WINDOW
+                || (*r_start >= seg.start && *r_start <= seg.end)
+                || (seg.start >= *r_start && seg.start <= *r_end);
+            if time_overlap {
+                remote_union.extend(r_words.iter().cloned());
+            }
+        }
+
+        if remote_union.is_empty() {
+            result.push(seg);
+            continue;
+        }
+
+        // What fraction of the Me words appear in nearby Remote segments?
+        let matched = me_set.intersection(&remote_union).count();
+        let ratio = matched as f64 / me_set.len() as f64;
+
+        if ratio > SIMILARITY_THRESHOLD {
             dropped += 1;
+            info!(
+                text = seg.text,
+                start = format!("{:.1}s", seg.start),
+                ratio = format!("{:.2}", ratio),
+                "Dedup: dropping Me segment (bleed)"
+            );
         } else {
             result.push(seg);
         }
