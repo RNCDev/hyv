@@ -5,43 +5,57 @@ use crate::audio::vad;
 
 const SAMPLE_RATE: u32 = 16000;
 
+/// Maximum plausible loudspeaker echo delay. Real room echo (mic picking up
+/// speaker output) arrives within ~300ms. Delays above this threshold indicate
+/// either headphones/earbuds (no acoustic path → nothing to cancel) or a
+/// misaligned onset detection. In both cases AEC should be skipped.
+const MAX_PLAUSIBLE_DELAY_MS: i64 = 1000;
+
 /// Detect the render-ahead delay in milliseconds by comparing the first speech
 /// onset of the reference (system/far-end) vs the mic (near-end).
 ///
-/// AEC3 needs to know how many ms ahead the reference signal is relative to
-/// the capture signal. In a typical call the AI starts speaking before the user
-/// responds, so `sys_onset < mic_onset`, giving a positive delay.
-///
-/// Returns 0 if either channel has no speech or if the computed delay is
-/// negative (mic starts first — unusual, but AEC can handle delay=0).
-pub fn detect_render_delay_ms(mic: &[f32], reference: &[f32]) -> u32 {
+/// Returns `None` when AEC should be skipped entirely:
+/// - Either channel has no speech
+/// - Detected delay is negative (mic starts before system — no echo scenario)
+/// - Detected delay exceeds MAX_PLAUSIBLE_DELAY_MS (headphones, or onset
+///   detection confused by conversational timing gaps)
+pub fn detect_render_delay_ms(mic: &[f32], reference: &[f32]) -> Option<u32> {
     let mic_onset = first_speech_onset(mic);
     let sys_onset = first_speech_onset(reference);
 
     let (mic_onset, sys_onset) = match (mic_onset, sys_onset) {
         (Some(m), Some(s)) => (m, s),
         _ => {
-            info!("AEC delay detect: one channel has no speech — using delay=0");
-            return 0;
+            info!("AEC: one channel has no speech — skipping AEC");
+            return None;
         }
     };
 
     let offset_samples = mic_onset as i64 - sys_onset as i64;
     let offset_ms = offset_samples * 1000 / SAMPLE_RATE as i64;
 
-    // Negative means mic started before system (rare). Use 0 — AEC still works,
-    // it will adapt. Very large values (>5s) are implausible; clamp to 5000ms.
-    let delay_ms = offset_ms.clamp(0, 5000) as u32;
+    if offset_ms <= 0 {
+        info!(offset_ms, "AEC: mic starts before system — no echo, skipping AEC");
+        return None;
+    }
+
+    if offset_ms > MAX_PLAUSIBLE_DELAY_MS {
+        info!(
+            offset_ms,
+            max_ms = MAX_PLAUSIBLE_DELAY_MS,
+            "AEC: delay exceeds plausible echo range — likely headphones, skipping AEC"
+        );
+        return None;
+    }
 
     info!(
         mic_onset_ms = mic_onset * 1000 / SAMPLE_RATE as usize,
         sys_onset_ms = sys_onset * 1000 / SAMPLE_RATE as usize,
-        offset_ms,
-        delay_ms,
+        delay_ms = offset_ms,
         "AEC: detected render-ahead delay"
     );
 
-    delay_ms
+    Some(offset_ms as u32)
 }
 
 /// Cancel echo from `mic` using `reference` (system audio) as the far-end signal.

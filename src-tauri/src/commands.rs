@@ -231,14 +231,22 @@ fn process_recording(
     debug::save_audio(&mic_audio, "mic_normalized");
     debug::save_audio(&system_audio, "system_normalized");
 
-    // Echo cancellation: detect how far ahead the reference (system audio) is
-    // relative to the mic, then pass that as initial_delay_ms to AEC3.
-    // Both buffers stay at full length — no trimming of content.
+    // Echo cancellation: only run when we detect a plausible loudspeaker echo
+    // delay (0–1000ms). Skipped when delay is out of range — which covers
+    // headphones/earbuds (no acoustic path) and large conversational offsets
+    // that would cause AEC to suppress the user's voice instead of echo.
     let mic_audio = if !system_audio.is_empty() {
-        let delay_ms = aec::detect_render_delay_ms(&mic_audio, &system_audio);
-        let cleaned = aec::cancel_echo(&mic_audio, &system_audio, delay_ms);
-        debug::save_audio(&cleaned, "mic_aec");
-        cleaned
+        match aec::detect_render_delay_ms(&mic_audio, &system_audio) {
+            Some(delay_ms) => {
+                let cleaned = aec::cancel_echo(&mic_audio, &system_audio, delay_ms);
+                debug::save_audio(&cleaned, "mic_aec");
+                cleaned
+            }
+            None => {
+                info!("AEC skipped — using normalized mic audio as-is");
+                mic_audio
+            }
+        }
     } else {
         mic_audio
     };
@@ -347,11 +355,12 @@ fn align_channels(segments: &mut [TranscribedSegment]) {
     };
 
     let offset = s1 - s2;
-    // Only correct if the offset is significant (>3s). Smaller offsets are
-    // likely conversational timing (e.g. AI speaks first, user responds later)
-    // rather than a genuine buffer-start misalignment. Over-correcting pushes
-    // bleed segments to wrong timestamps and confuses dedup.
-    if offset.abs() <= 3.0 {
+    // Only correct if the offset is very large (>8s) — a genuine buffer-start
+    // misalignment from CPAL starting significantly earlier than the audio tap.
+    // Smaller offsets are conversational timing (AI greeting before user speaks)
+    // and must not be corrected — doing so pushes bleed timestamps out of the
+    // dedup window and causes missed drops or false drops.
+    if offset.abs() <= 8.0 {
         return;
     }
 
