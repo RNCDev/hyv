@@ -177,12 +177,42 @@ See [CLAUDE.md](CLAUDE.md) for full internal architecture reference.
 
 ---
 
+## Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| No menu bar icon | App may be running but tray didn't register — restart |
+| Microphone not working | System Settings → Privacy & Security → Microphone → enable Hyv. Or: `tccutil reset Microphone com.hyv.app` |
+| System audio not capturing | System Settings → Privacy & Security → Screen Recording → enable Hyv. Or: `tccutil reset ScreenCapture com.hyv.app` |
+| Transcript empty / `duration=0.0s` | Recording stopped before mic thread started — try recording for at least 3–5 seconds |
+| Model download stuck | Check connection. Verify: `ls -lh ~/Library/Application\ Support/Hyv/models/` — should be ~1.5 GB |
+| Build fails: `cmake not found` | `brew install cmake` |
+| Build fails: Metal errors | `xcode-select --install` — Metal requires Xcode CLI tools |
+| Old path errors after moving repo | `rm -rf src-tauri/target && npm run tauri dev` |
+
+---
+
+## Key Dependencies
+
+| Crate | Purpose |
+|---|---|
+| `tauri` 2 | Desktop framework, tray icon, IPC |
+| `whisper-rs` 0.14 (metal) | On-device Whisper transcription via Metal GPU |
+| `cpal` 0.15 | Microphone capture |
+| `cidre` (git) | Apple Core Audio bindings — system audio Process Tap |
+| `ringbuf` 0.4 | Lock-free ring buffer for audio callbacks |
+| `tokio` 1 | Async runtime |
+| `reqwest` 0.12 | Whisper model download |
+
+---
+
 ## Known Limitations
 
 - English only (Whisper language hardcoded)
 - Processing is ~2–3× real-time on M-series (medium model) — a 10-minute recording takes ~20–30 minutes to process
 - System audio capture requires Screen Recording permission (macOS 14 limitation)
 - Multiple recordings within the same minute produce the same filename
+- All remote speakers labeled "Remote" — no per-speaker diarization yet
 
 ## License
 
