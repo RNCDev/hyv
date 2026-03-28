@@ -49,13 +49,6 @@ Replace energy-based RMS VAD (`src-tauri/src/audio/vad.rs`) with ML-based Silero
 
 **Key crates:** `silero-rs`, `ten-vad-rs`, `ort`
 
-### Vision-Enhanced Context
-**Source:** Minute
-
-Capture periodic screen snapshots during recording to help AI disambiguate visual references ("this slide", "that chart") during post-processing or summarization.
-
-**Implementation:** ScreenCaptureKit integration is partially available via cidre (already a dependency). Capture every N seconds, store alongside audio in debug dir. Feed to LLM during summarization step.
-
 ### Adaptive AEC Bypass
 **Source:** Project Raven
 
