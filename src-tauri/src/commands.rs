@@ -347,9 +347,11 @@ fn align_channels(segments: &mut [TranscribedSegment]) {
     };
 
     let offset = s1 - s2;
-    // Only correct if the offset is significant (>1s). Small offsets are
-    // normal timestamp jitter and shouldn't be adjusted.
-    if offset.abs() <= 1.0 {
+    // Only correct if the offset is significant (>3s). Smaller offsets are
+    // likely conversational timing (e.g. AI speaks first, user responds later)
+    // rather than a genuine buffer-start misalignment. Over-correcting pushes
+    // bleed segments to wrong timestamps and confuses dedup.
+    if offset.abs() <= 3.0 {
         return;
     }
 
@@ -367,12 +369,12 @@ fn align_channels(segments: &mut [TranscribedSegment]) {
 }
 
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
-    const TIME_WINDOW: f64 = 3.0;
+    const TIME_WINDOW: f64 = 5.0;
     const SIMILARITY_THRESHOLD: f64 = 0.65;
     // Short "Speaker 1" segments (≤ this many words) are never dropped — they're
     // likely genuine brief responses ("Sure", "Cool", "Thanks") that would
     // false-positive against any nearby Remote segment.
-    const MIN_WORDS_TO_DEDUP: usize = 4;
+    const MIN_WORDS_TO_DEDUP: usize = 3;
 
     let has_remote = segments.iter().any(|s| s.speaker == "Speaker 2");
     if !has_remote {
