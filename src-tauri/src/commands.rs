@@ -378,12 +378,17 @@ fn align_channels(segments: &mut [TranscribedSegment]) {
 }
 
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
-    const TIME_WINDOW: f64 = 5.0;
+    // How far before a Speaker 1 segment we look for overlapping Speaker 2 content.
+    // Acoustic bleed arrives with <300ms delay but Whisper timestamp jitter needs slack.
+    const LOOK_BACK: f64 = 3.0;
+    // How far after a Speaker 1 segment we still accept Speaker 2 content.
+    // Kept small (1.0s) to enforce causality: Vapi responding after the user
+    // finished speaking is not bleed, it's a reply.
+    const LOOK_FORWARD: f64 = 1.0;
     const SIMILARITY_THRESHOLD: f64 = 0.55;
-    // Short "Speaker 1" segments (≤ this many words) are never dropped — they're
-    // likely genuine brief responses ("Sure", "Cool", "Thanks") that would
-    // false-positive against any nearby Remote segment.
-    const MIN_WORDS_TO_DEDUP: usize = 2;
+    // Segments with ≤ this many total words are never dropped — they're likely
+    // genuine short back-channel responses ("It's going well", "Through Google search").
+    const MIN_WORDS_TO_DEDUP: usize = 4;
 
     let has_remote = segments.iter().any(|s| s.speaker == "Speaker 2");
     if !has_remote {
@@ -422,7 +427,7 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
         let me_set: HashSet<String> = me_words.iter().cloned().collect();
 
         // Short responses are always kept
-        if me_set.len() <= MIN_WORDS_TO_DEDUP {
+        if me_words.len() <= MIN_WORDS_TO_DEDUP {
             result.push(seg);
             continue;
         }
@@ -433,10 +438,13 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
         // segments — we check against the combined Remote content.
         let mut remote_union: HashSet<String> = HashSet::new();
         for (r_start, r_end, r_words) in &remote_entries {
-            let time_overlap = (r_start - seg.start).abs() <= TIME_WINDOW
-                || (r_end - seg.end).abs() <= TIME_WINDOW
-                || (*r_start >= seg.start && *r_start <= seg.end)
-                || (seg.start >= *r_start && seg.start <= *r_end);
+            // Standard asymmetric interval overlap with causality bound.
+            // LOOK_BACK: accept Speaker 2 content that started up to 3s before this segment.
+            // LOOK_FORWARD: accept Speaker 2 content that starts up to 1s after this segment ends.
+            // The 1.0s forward bound is the causality guard — Vapi responding after the user
+            // finishes is a reply, not acoustic bleed.
+            let time_overlap = *r_start < seg.end + LOOK_FORWARD
+                && *r_end > seg.start - LOOK_BACK;
             if time_overlap {
                 remote_union.extend(r_words.iter().cloned());
             }
@@ -523,4 +531,60 @@ pub async fn open_transcript(path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_transcript(path: String) -> Result<(), String> {
     std::fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transcription::engine::TranscribedSegment;
+
+    fn seg(speaker: &str, start: f64, end: f64, text: &str) -> TranscribedSegment {
+        TranscribedSegment { speaker: speaker.to_string(), start, end, text: text.to_string() }
+    }
+
+    // 1. Real bleed: mic repeats system audio with overlapping timestamps — drop it
+    #[test]
+    fn dedup_drops_bleed_with_time_overlap() {
+        let segments = vec![
+            seg("Speaker 2", 0.0, 5.0, "Welcome to vapi I am an assistant"),
+            seg("Speaker 1", 1.0, 5.0, "Welcome to vapi I am an assistant"),
+        ];
+        let result = deduplicate_bleed(segments);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].speaker, "Speaker 2");
+    }
+
+    // 2. User responds after Vapi — must NOT be dropped even though words overlap
+    #[test]
+    fn dedup_keeps_user_response_after_vapi_turn() {
+        let segments = vec![
+            seg("Speaker 2", 0.0, 4.0, "Would you mind telling me how you found out about vapi"),
+            // User responds 5 seconds after Vapi finishes — outside LOOK_FORWARD window
+            seg("Speaker 1", 9.0, 11.0, "Through google search"),
+        ];
+        let result = deduplicate_bleed(segments);
+        assert_eq!(result.len(), 2, "User response must be kept");
+    }
+
+    // 3. Short user response (≤4 words) — never dropped regardless of overlap
+    #[test]
+    fn dedup_keeps_short_user_response() {
+        let segments = vec![
+            seg("Speaker 2", 0.0, 5.0, "how is your day going its going well nice"),
+            seg("Speaker 1", 0.5, 2.0, "its going well"), // 3 words, overlapping
+        ];
+        let result = deduplicate_bleed(segments);
+        assert_eq!(result.len(), 2, "Short response must be kept unconditionally");
+    }
+
+    // 4. Vapi segment starts >1s after user ends — must NOT be in match union
+    #[test]
+    fn dedup_causality_guard_excludes_future_vapi() {
+        let segments = vec![
+            seg("Speaker 1", 0.0, 3.0, "through a friend at intuit"),
+            seg("Speaker 2", 5.0, 9.0, "thanks so vapi is built to stay flexible"),
+        ];
+        let result = deduplicate_bleed(segments);
+        assert_eq!(result.len(), 2, "User turn must not be dropped due to future Vapi response");
+    }
 }
