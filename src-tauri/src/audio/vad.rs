@@ -27,8 +27,9 @@ pub fn find_speech_segments(
 
     // Sidechain gain: amplify only the signal used for VAD decisions, not the
     // audio sent to Whisper. This lifts sub-vocalized speech above the threshold
-    // without altering spectral quality. 6dB ≈ 2x linear amplitude boost.
+    // without altering spectral quality. 1.75x ≈ +5dB, recovers "Yeah, please".
     const VAD_SIDECHAIN_GAIN: f32 = 1.75;
+
 
     // How many silent frames to tolerate before closing a segment (200ms hangover).
     // Prevents trailing low-energy consonants and word endings from being clipped.
