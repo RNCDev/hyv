@@ -20,6 +20,8 @@ pub struct ModelInfo {
     pub url: String,
     pub size_bytes: u64,
     pub kind: ModelKind,
+    #[serde(default)]
+    pub extra_files: Vec<(String, String, u64)>,  // (filename, url, size_bytes)
 }
 
 impl ModelInfo {
@@ -44,6 +46,7 @@ impl ModelInfo {
                 .to_string(),
             size_bytes: 1_533_774_781,
             kind: ModelKind::Whisper,
+            extra_files: vec![],
         }
     }
 
@@ -57,6 +60,7 @@ impl ModelInfo {
                 .to_string(),
             size_bytes: 1_620_000_000,
             kind: ModelKind::Whisper,
+            extra_files: vec![],
         }
     }
 
@@ -70,6 +74,7 @@ impl ModelInfo {
                 .to_string(),
             size_bytes: 1_515_000_000,
             kind: ModelKind::Whisper,
+            extra_files: vec![],
         }
     }
 
@@ -82,6 +87,7 @@ impl ModelInfo {
                 .to_string(),
             size_bytes: 3_094_623_691,
             kind: ModelKind::Whisper,
+            extra_files: vec![],
         }
     }
 
@@ -94,17 +100,35 @@ impl ModelInfo {
             url: "https://huggingface.co/Xenova/wav2vec2-base-960h/resolve/main/onnx/model_int8.onnx".into(),
             size_bytes: 95_286_006,
             kind: ModelKind::ParakeetOnnx,
+            extra_files: vec![],
         }
     }
 
     pub fn cohere_transcribe() -> Self {
-        // NOTE: URL is best-effort — verify at HuggingFace before download is triggered
-        ModelInfo {
+        let base = "https://huggingface.co/onnx-community/cohere-transcribe-03-2026-ONNX/resolve/main/onnx";
+        Self {
             name: "cohere-transcribe".into(),
-            filename: "cohere-transcribe-q4.onnx".into(),
-            url: "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026-onnx/resolve/main/model_q4.onnx".into(),
-            size_bytes: 1_800_000_000,
+            filename: "cohere-encoder-q4.onnx".into(),
+            url: format!("{base}/encoder_model_q4.onnx"),
+            size_bytes: 1_400_792,
             kind: ModelKind::CohereOnnx,
+            extra_files: vec![
+                (
+                    "cohere-encoder-q4.onnx_data".into(),
+                    format!("{base}/encoder_model_q4.onnx_data"),
+                    2_016_067_072,
+                ),
+                (
+                    "cohere-decoder-merged-q4.onnx".into(),
+                    format!("{base}/decoder_model_merged_q4.onnx"),
+                    193_099,
+                ),
+                (
+                    "cohere-decoder-merged-q4.onnx_data".into(),
+                    format!("{base}/decoder_model_merged_q4.onnx_data"),
+                    108_855_296,
+                ),
+            ],
         }
     }
 }
@@ -133,8 +157,21 @@ impl ModelManager {
     }
 
     pub fn is_downloaded(&self, model: &ModelInfo) -> bool {
-        let path = self.model_path(model);
-        path.exists() && path.metadata().is_ok_and(|m| m.len() > 0)
+        let check = |path: &std::path::Path| {
+            path.exists() && path.metadata().is_ok_and(|m| m.len() > 0)
+        };
+        if !check(&self.model_path(model)) {
+            return false;
+        }
+        model.extra_files.iter().all(|(filename, _, _)| {
+            check(&self.models_dir.join(filename))
+        })
+    }
+
+    /// Resolve a file path within the models directory by filename.
+    /// Used by build_engine() to locate extra model files (e.g. Cohere decoder).
+    pub fn extra_file_path(&self, filename: &str) -> PathBuf {
+        self.models_dir.join(filename)
     }
 
     /// Path for the tokenizer JSON co-located with the ONNX model.
@@ -148,29 +185,61 @@ impl ModelManager {
 
     /// Download a model with progress callback.
     /// callback receives (bytes_downloaded, total_bytes).
-    pub async fn download<F>(
-        &self,
-        model: &ModelInfo,
-        progress: F,
-    ) -> Result<PathBuf, String>
+    pub async fn download<F>(&self, model: &ModelInfo, progress: F) -> Result<PathBuf, String>
     where
-        F: Fn(u64, u64) + Send + 'static,
+        F: Fn(u64, u64) + Send + Clone + 'static,
     {
-        let path = self.model_path(model);
-
         if self.is_downloaded(model) {
             info!(model = %model.name, "Model already downloaded");
-            return Ok(path);
+            return Ok(self.model_path(model));
         }
 
-        info!(
-            model = %model.name,
-            url = %model.url,
-            "Downloading model"
-        );
+        info!(model = %model.name, "Downloading model ({} files)", 1 + model.extra_files.len());
 
-        self.download_url(&model.url, &path, model.size_bytes, progress).await?;
-        Ok(path)
+        let total_bytes: u64 = model.size_bytes
+            + model.extra_files.iter().map(|(_, _, s)| *s).sum::<u64>();
+
+        let mut offset: u64 = 0;
+
+        // Primary file
+        {
+            let path = self.model_path(model);
+            if !(path.exists() && path.metadata().is_ok_and(|m| m.len() > 0)) {
+                let size = model.size_bytes;
+                let off = offset;
+                let prog = progress.clone();
+                let total = total_bytes;
+                self.download_url(
+                    &model.url,
+                    &path,
+                    size,
+                    move |d, _| prog(off + d, total),
+                ).await?;
+            }
+            offset += model.size_bytes;
+        }
+
+        // Extra files
+        for (filename, url, size) in &model.extra_files {
+            let dest = self.models_dir.join(filename);
+            if dest.exists() && dest.metadata().is_ok_and(|m| m.len() > 0) {
+                offset += size;
+                continue;
+            }
+            let off = offset;
+            let sz = *size;
+            let prog = progress.clone();
+            let total = total_bytes;
+            self.download_url(
+                url,
+                &dest,
+                sz,
+                move |d, _| prog(off + d, total),
+            ).await?;
+            offset += size;
+        }
+
+        Ok(self.model_path(model))
     }
 
     /// Download `url` to `dest`, reporting progress via callback.
@@ -230,7 +299,7 @@ impl ModelManager {
     {
         let tokenizer_url = match model.kind {
             ModelKind::ParakeetOnnx => "https://huggingface.co/Xenova/wav2vec2-base-960h/resolve/main/tokenizer.json",
-            ModelKind::CohereOnnx   => "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026-onnx/resolve/main/tokenizer.json",
+            ModelKind::CohereOnnx   => "https://huggingface.co/onnx-community/cohere-transcribe-03-2026-ONNX/resolve/main/tokenizer.json",
             ModelKind::Whisper      => return Ok(()),
         };
         let dest = match self.tokenizer_path(model) {
