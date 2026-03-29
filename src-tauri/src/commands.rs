@@ -245,16 +245,29 @@ fn build_engine(
     model_mgr: &crate::transcription::model_manager::ModelManager,
 ) -> Result<Box<dyn crate::transcription::engine::TranscriptionEngine>, String> {
     use crate::transcription::model_manager::ModelKind;
-    use crate::transcription::onnx_engine::OnnxEngine;
 
     match model_info.kind {
         ModelKind::Whisper => Ok(Box::new(WhisperEngine::new(model_path)?)),
-        ModelKind::ParakeetOnnx | ModelKind::CohereOnnx => {
+        ModelKind::ParakeetOnnx => {
+            use crate::transcription::onnx_engine::OnnxEngine;
             let tokenizer_path = model_mgr.tokenizer_path(model_info);
             Ok(Box::new(OnnxEngine::new(
                 model_path,
                 model_info.kind.clone(),
                 tokenizer_path.as_deref(),
+            )?))
+        }
+        ModelKind::CohereOnnx => {
+            use crate::transcription::cohere::{CohereEngine, CohereDecodeOptions};
+            let encoder_path = model_mgr.model_path(model_info);
+            let decoder_path = model_mgr.extra_file_path("cohere-decoder-merged-q4.onnx");
+            let tokenizer_path = model_mgr.tokenizer_path(model_info)
+                .ok_or_else(|| "Cohere tokenizer path not found".to_string())?;
+            Ok(Box::new(CohereEngine::new(
+                &encoder_path,
+                &decoder_path,
+                &tokenizer_path,
+                CohereDecodeOptions::default(),
             )?))
         }
     }
