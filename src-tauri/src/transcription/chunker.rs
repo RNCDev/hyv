@@ -7,9 +7,12 @@ const WHISPER_CHUNK_SECS: f64 = 30.0;
 /// Minimum RMS energy a chunk must have to be sent to Whisper.
 /// Chunks below this threshold are near-silence — Whisper tends to hallucinate
 /// plausible-sounding text on them rather than returning nothing.
-/// 0.002 matches the VAD energy threshold; chunks this quiet slipped through VAD
-/// at segment boundaries and should be skipped.
 const MIN_CHUNK_RMS: f32 = 0.002;
+
+/// Minimum chunk duration in seconds. Chunks shorter than this (noise blips
+/// that slipped through VAD at a low energy threshold) tend to produce single
+/// punctuation hallucinations. 0.4s is below any real utterance we care about.
+const MIN_CHUNK_SECS: f64 = 0.4;
 
 /// A chunk of audio to be transcribed.
 #[derive(Debug, Clone)]
@@ -41,6 +44,19 @@ pub fn chunk_speech(
             let end = (pos + chunk_samples).min(seg_audio.len());
             let chunk_offset = seg_offset + (pos as f64 / sample_rate as f64);
             let chunk_samples_slice = &seg_audio[pos..end];
+
+            // Duration gate: skip very short chunks — noise blips that slipped
+            // through VAD produce single-punctuation hallucinations.
+            let chunk_secs = chunk_samples_slice.len() as f64 / sample_rate as f64;
+            if chunk_secs < MIN_CHUNK_SECS {
+                info!(
+                    duration = format!("{:.3}s", chunk_secs),
+                    offset = format!("{:.1}s", chunk_offset),
+                    "Chunker: skipping too-short chunk"
+                );
+                pos = end;
+                continue;
+            }
 
             // RMS gate: skip near-silent chunks to prevent Whisper hallucinations
             let rms = crate::audio::util::rms(chunk_samples_slice);

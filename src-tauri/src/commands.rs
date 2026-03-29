@@ -309,6 +309,7 @@ pub fn run_channel_pipeline(
     speaker: &str,
     engine: &WhisperEngine,
     use_beam_search: bool,
+    initial_prompt: &str,
     progress: &dyn Fn(f64, &str),
 ) -> Result<Vec<TranscribedSegment>, String> {
     let speech = vad::find_speech_segments(
@@ -327,11 +328,17 @@ pub fn run_channel_pipeline(
 
     progress(0.0, &format!("Transcribing {speaker} ({} chunks)...", chunks.len()));
 
-    engine.transcribe_channel(&chunks, speaker, use_beam_search, |done, total| {
+    engine.transcribe_channel(&chunks, speaker, use_beam_search, initial_prompt, |done, total| {
         let pct = done as f64 / total as f64;
         progress(pct, &format!("Transcribing {speaker}: {done}/{total}"));
     })
 }
+
+/// Initial prompt for mic channel (Speaker 1 — conversational, noisy).
+const PROMPT_MIC: &str = "Vapi";
+/// Initial prompt for system channel (Speaker 2 — clean TTS). Includes "500 ms"
+/// to bias Whisper toward the correct unit when transcribing latency figures.
+const PROMPT_SYSTEM: &str = "Vapi 500 ms";
 
 fn process_channel(
     audio: &[f32],
@@ -342,8 +349,9 @@ fn process_channel(
     use_beam_search: bool,
     app: &AppHandle,
 ) -> Result<Vec<TranscribedSegment>, String> {
+    let prompt = if speaker == "Speaker 2" { PROMPT_SYSTEM } else { PROMPT_MIC };
     update_progress(app, progress_start, &format!("Analyzing {speaker} audio..."));
-    run_channel_pipeline(audio, speaker, engine, use_beam_search, &|frac, msg| {
+    run_channel_pipeline(audio, speaker, engine, use_beam_search, prompt, &|frac, msg| {
         let pct = progress_start + frac * progress_range;
         update_progress(app, pct, msg);
     })

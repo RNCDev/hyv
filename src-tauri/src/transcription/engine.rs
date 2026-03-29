@@ -39,6 +39,7 @@ impl WhisperEngine {
         &self,
         chunk: &AudioChunk,
         use_beam_search: bool,
+        initial_prompt: &str,
     ) -> Result<Vec<TranscribedSegment>, String> {
         info!(
             chunk = chunk.index + 1,
@@ -68,6 +69,9 @@ impl WhisperEngine {
         params.set_logprob_thold(-1.0);
         // Minimum per-token timestamp probability. Filters uncertain word boundaries.
         params.set_thold_pt(0.01);
+        if !initial_prompt.is_empty() {
+            params.set_initial_prompt(initial_prompt);
+        }
 
         let mut state = self
             .ctx
@@ -89,7 +93,8 @@ impl WhisperEngine {
                 .map_err(|e| format!("Failed to get segment text: {e}"))?;
 
             let text = text.trim().to_string();
-            if text.is_empty() {
+            // Skip empty or punctuation-only segments (common Whisper artifact on near-speech noise)
+            if text.is_empty() || text.chars().all(|c| !c.is_alphanumeric()) {
                 continue;
             }
 
@@ -124,6 +129,7 @@ impl WhisperEngine {
         chunks: &[AudioChunk],
         speaker: &str,
         use_beam_search: bool,
+        initial_prompt: &str,
         progress: F,
     ) -> Result<Vec<TranscribedSegment>, String>
     where
@@ -132,7 +138,7 @@ impl WhisperEngine {
         let mut all_segments = Vec::new();
 
         for (i, chunk) in chunks.iter().enumerate() {
-            let mut segments = self.transcribe_chunk(chunk, use_beam_search)?;
+            let mut segments = self.transcribe_chunk(chunk, use_beam_search, initial_prompt)?;
             for seg in &mut segments {
                 seg.speaker = speaker.to_string();
             }

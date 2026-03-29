@@ -80,11 +80,11 @@ fn main() -> Result<(), String> {
 
     eprintln!("--- Transcribing mic (Speaker 1, Greedy) ---");
     let mut mic_segments =
-        run_channel_pipeline(&mic_audio, "Speaker 1", &engine, false, &progress)?;
+        run_channel_pipeline(&mic_audio, "Speaker 1", &engine, false, "Vapi", &progress)?;
 
     eprintln!("--- Transcribing system (Speaker 2, Beam Search) ---");
     let mut sys_segments =
-        run_channel_pipeline(&system_audio, "Speaker 2", &engine, true, &progress)?;
+        run_channel_pipeline(&system_audio, "Speaker 2", &engine, true, "Vapi 500 ms", &progress)?;
 
     let mut all_segments = Vec::new();
     all_segments.append(&mut mic_segments);
