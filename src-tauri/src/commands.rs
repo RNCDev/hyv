@@ -6,7 +6,7 @@ use crate::debug;
 use crate::output::transcript_writer;
 use crate::state::{AppState, AppStatus, ProgressPayload};
 use crate::transcription::chunker;
-use crate::transcription::engine::{TranscribedSegment, WhisperEngine};
+use crate::transcription::engine::{TranscribedSegment, TranscriptionEngine, WhisperEngine};
 use crate::transcription::model_manager::{ModelInfo, ModelManager};
 use crate::text_util::normalize_words as words;
 use std::collections::HashSet;
@@ -235,6 +235,27 @@ pub async fn stop_recording(
     Ok(())
 }
 
+fn build_engine(
+    model_info: &crate::transcription::model_manager::ModelInfo,
+    model_path: &std::path::Path,
+    model_mgr: &crate::transcription::model_manager::ModelManager,
+) -> Result<Box<dyn crate::transcription::engine::TranscriptionEngine>, String> {
+    use crate::transcription::model_manager::ModelKind;
+    use crate::transcription::onnx_engine::OnnxEngine;
+
+    match model_info.kind {
+        ModelKind::Whisper => Ok(Box::new(WhisperEngine::new(model_path)?)),
+        ModelKind::ParakeetOnnx | ModelKind::CohereOnnx => {
+            let tokenizer_path = model_mgr.tokenizer_path(model_info);
+            Ok(Box::new(OnnxEngine::new(
+                model_path,
+                model_info.kind.clone(),
+                tokenizer_path.as_deref(),
+            )?))
+        }
+    }
+}
+
 fn process_recording(
     mic_audio: &[f32],
     system_audio: &[f32],
@@ -277,7 +298,7 @@ fn process_recording(
 
     let model_mgr = ModelManager::new()?;
     let model_path = model_mgr.model_path(model_info);
-    let engine = WhisperEngine::new(&model_path)?;
+    let engine = build_engine(model_info, &model_path, &model_mgr)?;
 
     let mut all_segments = Vec::new();
 
@@ -289,7 +310,7 @@ fn process_recording(
             "Speaker 2",
             PROGRESS_SYS_START,
             PROGRESS_SYS_RANGE,
-            &engine,
+            engine.as_ref(),
             true, // use_beam_search: Beam Search for clean system audio channel
             &[],  // no prior context for system channel
             app,
@@ -306,7 +327,7 @@ fn process_recording(
             "Speaker 1",
             PROGRESS_MIC_START,
             PROGRESS_MIC_RANGE,
-            &engine,
+            engine.as_ref(),
             false,        // use_beam_search: Greedy for noisy mic channel
             &sys_segments, // inject system transcript as rolling context
             app,
@@ -337,7 +358,7 @@ fn process_recording(
 pub fn run_channel_pipeline(
     audio: &[f32],
     speaker: &str,
-    engine: &WhisperEngine,
+    engine: &dyn TranscriptionEngine,
     use_beam_search: bool,
     base_prompt: &str,
     context_segments: &[TranscribedSegment],
@@ -359,10 +380,11 @@ pub fn run_channel_pipeline(
 
     progress(0.0, &format!("Transcribing {speaker} ({} chunks)...", chunks.len()));
 
-    engine.transcribe_channel(&chunks, speaker, use_beam_search, base_prompt, context_segments, |done, total| {
+    let cb = |done: usize, total: usize| {
         let pct = done as f64 / total as f64;
         progress(pct, &format!("Transcribing {speaker}: {done}/{total}"));
-    })
+    };
+    engine.transcribe_channel(&chunks, speaker, use_beam_search, base_prompt, context_segments, &cb)
 }
 
 /// Initial prompt for mic channel (Speaker 1 — conversational, noisy).
@@ -376,7 +398,7 @@ fn process_channel(
     speaker: &str,
     progress_start: f64,
     progress_range: f64,
-    engine: &WhisperEngine,
+    engine: &dyn TranscriptionEngine,
     use_beam_search: bool,
     context_segments: &[TranscribedSegment],
     app: &AppHandle,

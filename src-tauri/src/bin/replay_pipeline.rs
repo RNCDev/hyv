@@ -16,7 +16,7 @@ use hyv_lib::{
     audio::aec,
     commands::{align_channels_pub, deduplicate_bleed_pub, run_channel_pipeline},
     text_util::normalize_words,
-    transcription::engine::WhisperEngine,
+    transcription::engine::{TranscriptionEngine, WhisperEngine},
     transcription::model_manager::{ModelInfo, ModelManager},
     output::transcript_writer,
 };
@@ -83,17 +83,17 @@ fn main() -> Result<(), String> {
     if !model_path.exists() {
         return Err(format!("Model not downloaded: {}", model_path.display()));
     }
-    let engine = WhisperEngine::new(&model_path)?;
+    let engine: Box<dyn TranscriptionEngine> = Box::new(WhisperEngine::new(&model_path)?);
 
     let progress = |_frac: f64, msg: &str| eprintln!("  {msg}");
 
     eprintln!("--- Transcribing system (Speaker 2, Beam Search) ---");
     let sys_segments =
-        run_channel_pipeline(&system_audio, "Speaker 2", &engine, true, "Vapi 500 ms", &[], &progress)?;
+        run_channel_pipeline(&system_audio, "Speaker 2", engine.as_ref(), true, "Vapi 500 ms", &[], &progress)?;
 
     eprintln!("--- Transcribing mic (Speaker 1, Greedy, with system context) ---");
     let mic_segments =
-        run_channel_pipeline(&mic_audio, "Speaker 1", &engine, false, "Vapi", &sys_segments, &progress)?;
+        run_channel_pipeline(&mic_audio, "Speaker 1", engine.as_ref(), false, "Vapi", &sys_segments, &progress)?;
 
     let mut all_segments = Vec::new();
     all_segments.extend(sys_segments);
