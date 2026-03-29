@@ -432,10 +432,10 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
             continue;
         }
 
-        // Gather the union of all Remote words from segments that overlap in
-        // time (within TIME_WINDOW of the Me segment's start OR end). This
-        // handles the case where a long Me segment spans multiple short Remote
-        // segments — we check against the combined Remote content.
+        // Gather the union of all Remote words from segments that have a time
+        // overlap with this Me segment (within LOOK_BACK before or LOOK_FORWARD
+        // after). This handles the case where a long Me segment spans multiple
+        // short Remote segments — we check against the combined Remote content.
         let mut remote_union: HashSet<String> = HashSet::new();
         for (r_start, r_end, r_words) in &remote_entries {
             // Standard asymmetric interval overlap with causality bound.
