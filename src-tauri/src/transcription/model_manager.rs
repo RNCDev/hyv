@@ -14,6 +14,19 @@ pub struct ModelInfo {
 }
 
 impl ModelInfo {
+    pub fn all() -> Vec<Self> {
+        vec![
+            Self::medium(),
+            Self::large_v3_turbo(),
+            Self::distil_large_v3(),
+            Self::large_v3(),
+        ]
+    }
+
+    pub fn by_name(name: &str) -> Option<Self> {
+        Self::all().into_iter().find(|m| m.name == name)
+    }
+
     pub fn medium() -> Self {
         Self {
             name: "medium".to_string(),
@@ -24,6 +37,40 @@ impl ModelInfo {
         }
     }
 
+    /// large-v3-turbo: OpenAI's speed-optimised large-v3 variant.
+    /// ~30% faster than large-v3, minimal accuracy loss, 1.6 GB.
+    pub fn large_v3_turbo() -> Self {
+        Self {
+            name: "large-v3-turbo".to_string(),
+            filename: "ggml-large-v3-turbo.bin".to_string(),
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+                .to_string(),
+            size_bytes: 1_620_000_000,
+        }
+    }
+
+    /// distil-large-v3: Knowledge-distilled large-v3, ~6x faster, within 1% WER.
+    /// Best accuracy/speed tradeoff for Apple Silicon. 1.5 GB.
+    pub fn distil_large_v3() -> Self {
+        Self {
+            name: "distil-large-v3".to_string(),
+            filename: "ggml-distil-large-v3.bin".to_string(),
+            url: "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin"
+                .to_string(),
+            size_bytes: 1_515_000_000,
+        }
+    }
+
+    /// large-v3: Full accuracy, 3.1 GB. Slowest but most capable.
+    pub fn large_v3() -> Self {
+        Self {
+            name: "large-v3".to_string(),
+            filename: "ggml-large-v3.bin".to_string(),
+            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
+                .to_string(),
+            size_bytes: 3_094_623_691,
+        }
+    }
 }
 
 pub struct ModelManager {

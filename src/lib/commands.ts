@@ -30,3 +30,22 @@ export async function openTranscript(path: string): Promise<void> {
 export async function deleteTranscript(path: string): Promise<void> {
   return invoke("delete_transcript", { path });
 }
+
+export interface ModelInfo {
+  name: string;
+  filename: string;
+  url: string;
+  size_bytes: number;
+}
+
+export async function listModels(): Promise<ModelInfo[]> {
+  return invoke("list_models");
+}
+
+export async function getActiveModel(): Promise<ModelInfo> {
+  return invoke("get_active_model");
+}
+
+export async function setActiveModel(name: string): Promise<void> {
+  return invoke("set_active_model", { name });
+}

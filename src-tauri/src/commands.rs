@@ -8,6 +8,7 @@ use crate::state::{AppState, AppStatus, ProgressPayload};
 use crate::transcription::chunker;
 use crate::transcription::engine::{TranscribedSegment, WhisperEngine};
 use crate::transcription::model_manager::{ModelInfo, ModelManager};
+use crate::text_util::normalize_words as words;
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -28,6 +29,27 @@ pub async fn get_status(state: State<'_, AppState>) -> Result<AppStatus, String>
 }
 
 #[tauri::command]
+pub async fn list_models() -> Vec<ModelInfo> {
+    ModelInfo::all()
+}
+
+#[tauri::command]
+pub async fn get_active_model(state: State<'_, AppState>) -> Result<ModelInfo, String> {
+    Ok(state.selected_model.lock().await.clone())
+}
+
+#[tauri::command]
+pub async fn set_active_model(
+    name: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let model = ModelInfo::by_name(&name)
+        .ok_or_else(|| format!("Unknown model: {name}"))?;
+    *state.selected_model.lock().await = model;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn start_recording(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -37,9 +59,9 @@ pub async fn start_recording(
         return Err("Cannot start recording: not idle".to_string());
     }
 
-    // Check model is available
+    // Check selected model is available
     let model_mgr = ModelManager::new()?;
-    let model = ModelInfo::medium();
+    let model = state.selected_model.lock().await.clone();
     if !model_mgr.is_downloaded(&model) {
         *status = AppStatus::ModelDownloading {
             progress: 0.0,
@@ -186,9 +208,10 @@ pub async fn stop_recording(
     }
 
     let app_clone = app.clone();
+    let model_info = state.selected_model.lock().await.clone();
 
     tokio::task::spawn_blocking(move || {
-        let result = process_recording(&mic_audio, &system_audio, duration, &app_clone);
+        let result = process_recording(&mic_audio, &system_audio, duration, &model_info, &app_clone);
 
         // Use a new tokio runtime handle to update state
         let rt = tokio::runtime::Handle::current();
@@ -216,6 +239,7 @@ fn process_recording(
     mic_audio: &[f32],
     system_audio: &[f32],
     duration: f64,
+    model_info: &ModelInfo,
     app: &AppHandle,
 ) -> Result<std::path::PathBuf, String> {
     // Save raw audio for debugging before any processing
@@ -252,8 +276,7 @@ fn process_recording(
     };
 
     let model_mgr = ModelManager::new()?;
-    let model_info = ModelInfo::medium();
-    let model_path = model_mgr.model_path(&model_info);
+    let model_path = model_mgr.model_path(model_info);
     let engine = WhisperEngine::new(&model_path)?;
 
     let mut all_segments = Vec::new();
@@ -430,8 +453,6 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
     if !has_remote {
         return segments;
     }
-
-    use crate::text_util::normalize_words as words;
 
     // Pre-compute remote data: (start, end, word set)
     let remote_entries: Vec<(f64, f64, HashSet<String>)> = segments

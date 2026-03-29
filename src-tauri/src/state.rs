@@ -1,3 +1,4 @@
+use crate::transcription::model_manager::ModelInfo;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -22,6 +23,7 @@ pub struct AppState {
     pub system_buffer: Arc<Mutex<Vec<f32>>>,
     pub mic_buffer: Arc<Mutex<Vec<f32>>>,
     pub recording_active: Arc<std::sync::atomic::AtomicBool>,
+    pub selected_model: Mutex<ModelInfo>,
 }
 
 impl AppState {
@@ -31,6 +33,7 @@ impl AppState {
             system_buffer: Arc::new(Mutex::new(Vec::new())),
             mic_buffer: Arc::new(Mutex::new(Vec::new())),
             recording_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            selected_model: Mutex::new(ModelInfo::medium()),
         }
     }
 }

@@ -1,6 +1,7 @@
 import { useAppState } from "./hooks/useAppState";
-import { StatusIndicator } from "./components/StatusIndicator";
+import { ModelSelector } from "./components/ModelSelector";
 import { RecordingControls } from "./components/RecordingControls";
+import { StatusIndicator } from "./components/StatusIndicator";
 import { TranscriptList } from "./components/TranscriptList";
 
 declare const __APP_VERSION__: string;
@@ -16,6 +17,7 @@ function App() {
       </div>
 
       <StatusIndicator status={status} recordingTime={recordingTime} formatTime={formatTime} />
+      <ModelSelector disabled={status.type !== "Idle"} />
       <RecordingControls status={status} recordingTime={recordingTime} formatTime={formatTime} />
 
       <div style={styles.divider} />

@@ -72,6 +72,9 @@ pub fn run() {
             commands::get_recent_transcripts,
             commands::open_transcript,
             commands::delete_transcript,
+            commands::list_models,
+            commands::get_active_model,
+            commands::set_active_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Hyv");
