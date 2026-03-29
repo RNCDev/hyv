@@ -25,6 +25,11 @@ pub fn find_speech_segments(
     let hop = frame_len;
     let n_frames = audio.len() / hop;
 
+    // Sidechain gain: amplify only the signal used for VAD decisions, not the
+    // audio sent to Whisper. This lifts sub-vocalized speech above the threshold
+    // without altering spectral quality. 6dB ≈ 2x linear amplitude boost.
+    const VAD_SIDECHAIN_GAIN: f32 = 1.75;
+
     // How many silent frames to tolerate before closing a segment (200ms hangover).
     // Prevents trailing low-energy consonants and word endings from being clipped.
     let hangover_frames = (0.2_f64 / 0.03_f64).ceil() as usize; // ~7 frames
@@ -39,8 +44,8 @@ pub fn find_speech_segments(
         let frame_end = (frame_start + frame_len).min(audio.len());
         let frame = &audio[frame_start..frame_end];
 
-        // RMS energy
-        let energy: f32 = super::util::rms(frame);
+        // RMS energy on sidechain (gain-boosted copy) — original frame untouched
+        let energy: f32 = super::util::rms(frame) * VAD_SIDECHAIN_GAIN;
 
         if energy > energy_threshold {
             if !in_speech {
