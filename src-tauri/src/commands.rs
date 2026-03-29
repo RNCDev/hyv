@@ -259,7 +259,6 @@ fn process_recording(
     let mut all_segments = Vec::new();
 
     if !mic_audio.is_empty() {
-        update_progress(app, 0.0, "Analyzing microphone audio...");
         let mic_segments = process_channel(
             &mic_audio,
             "Speaker 1",
@@ -273,7 +272,6 @@ fn process_recording(
     }
 
     if !system_audio.is_empty() {
-        update_progress(app, 50.0, "Analyzing system audio...");
         let sys_segments = process_channel(
             &system_audio,
             "Speaker 2",
@@ -303,14 +301,15 @@ fn process_recording(
     Ok(path)
 }
 
-fn process_channel(
+/// Core pipeline: VAD → chunker → Whisper → segments.
+/// Accepts a progress closure so it can be called from both the Tauri app
+/// (which has an AppHandle) and the replay harness (which does not).
+pub fn run_channel_pipeline(
     audio: &[f32],
     speaker: &str,
-    progress_start: f64,
-    progress_range: f64,
     engine: &WhisperEngine,
     use_beam_search: bool,
-    app: &AppHandle,
+    progress: &dyn Fn(f64, &str),
 ) -> Result<Vec<TranscribedSegment>, String> {
     let speech = vad::find_speech_segments(
         audio,
@@ -326,15 +325,27 @@ fn process_channel(
         return Ok(Vec::new());
     }
 
-    update_progress(
-        app,
-        progress_start,
-        &format!("Transcribing {speaker} ({} chunks)...", chunks.len()),
-    );
+    progress(0.0, &format!("Transcribing {speaker} ({} chunks)...", chunks.len()));
 
     engine.transcribe_channel(&chunks, speaker, use_beam_search, |done, total| {
-        let pct = progress_start + (done as f64 / total as f64) * progress_range;
-        update_progress(app, pct, &format!("Transcribing {speaker}: {done}/{total}"));
+        let pct = done as f64 / total as f64;
+        progress(pct, &format!("Transcribing {speaker}: {done}/{total}"));
+    })
+}
+
+fn process_channel(
+    audio: &[f32],
+    speaker: &str,
+    progress_start: f64,
+    progress_range: f64,
+    engine: &WhisperEngine,
+    use_beam_search: bool,
+    app: &AppHandle,
+) -> Result<Vec<TranscribedSegment>, String> {
+    update_progress(app, progress_start, &format!("Analyzing {speaker} audio..."));
+    run_channel_pipeline(audio, speaker, engine, use_beam_search, &|frac, msg| {
+        let pct = progress_start + frac * progress_range;
+        update_progress(app, pct, msg);
     })
 }
 
