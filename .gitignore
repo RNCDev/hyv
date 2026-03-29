@@ -22,3 +22,6 @@ src-tauri/models/
 # docs subfolders — keep folder structure, ignore contents
 docs/superpowers/
 docs/test-fixtures/
+
+# ONNX Runtime dylib — download via Task 11 Step 1
+src-tauri/resources/libonnxruntime.dylib

@@ -17,6 +17,21 @@ fn focus_window(window: &tauri::WebviewWindow) {
     let _ = window.eval("window.focus()");
 }
 
+fn setup_ort(app: &tauri::AppHandle) {
+    match app.path().resource_dir() {
+        Ok(resource_dir) => {
+            let dylib = resource_dir.join("libonnxruntime.dylib");
+            if let Err(e) = crate::transcription::onnx_runtime::init(&dylib) {
+                // Non-fatal: Whisper still works. ONNX models will error when selected.
+                tracing::warn!("ORT init failed — ONNX models unavailable: {e}");
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Could not locate resource_dir for ORT dylib: {e}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Set up log directory: ~/Library/Logs/Hyv/
@@ -52,6 +67,7 @@ pub fn run() {
 
             tracing::info!("Hyv v{} started", env!("CARGO_PKG_VERSION"));
             crate::debug::prune_old_files(7);
+            setup_ort(app.handle());
             Ok(())
         })
         .on_tray_icon_event(|app, event| {
