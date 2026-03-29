@@ -18,16 +18,30 @@ fn focus_window(window: &tauri::WebviewWindow) {
 }
 
 fn setup_ort(app: &tauri::AppHandle) {
-    match app.path().resource_dir() {
-        Ok(resource_dir) => {
-            let dylib = resource_dir.join("libonnxruntime.dylib");
-            if let Err(e) = crate::transcription::onnx_runtime::init(&dylib) {
-                // Non-fatal: Whisper still works. ONNX models will error when selected.
+    // Try the Tauri resource dir first (production bundle).
+    // In `tauri dev`, resource_dir points into build artifacts and the dylib
+    // won't be there — fall back to the source-tree location.
+    let dylib = app
+        .path()
+        .resource_dir()
+        .ok()
+        .map(|d| d.join("libonnxruntime.dylib"))
+        .filter(|p| p.exists())
+        .or_else(|| {
+            // Dev fallback: locate src-tauri/resources/ relative to the manifest dir
+            let src_tauri = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+            let dev_path = src_tauri.join("resources/libonnxruntime.dylib");
+            if dev_path.exists() { Some(dev_path) } else { None }
+        });
+
+    match dylib {
+        Some(path) => {
+            if let Err(e) = crate::transcription::onnx_runtime::init(&path) {
                 tracing::warn!("ORT init failed — ONNX models unavailable: {e}");
             }
         }
-        Err(e) => {
-            tracing::warn!("Could not locate resource_dir for ORT dylib: {e}");
+        None => {
+            tracing::warn!("libonnxruntime.dylib not found — ONNX models unavailable");
         }
     }
 }
