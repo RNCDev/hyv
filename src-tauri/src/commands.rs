@@ -65,7 +65,7 @@ pub async fn start_recording(
     if !model_mgr.is_downloaded(&model) {
         *status = AppStatus::ModelDownloading {
             progress: 0.0,
-            message: "Downloading Whisper model...".to_string(),
+            message: format!("Downloading {}...", model.name),
         };
         emit_status(&app, &status);
         drop(status);
@@ -115,6 +115,11 @@ pub async fn start_recording(
         });
 
         return Ok(());
+    }
+
+    // Ensure tokenizer is present for ONNX models even when main model files are cached
+    if let Err(e) = model_mgr.ensure_tokenizer(&model, |_, _| {}).await {
+        return Err(format!("Tokenizer download failed: {e}"));
     }
 
     // Clear buffers
@@ -260,7 +265,7 @@ fn build_engine(
         ModelKind::CohereOnnx => {
             use crate::transcription::cohere::{CohereEngine, CohereDecodeOptions};
             let encoder_path = model_mgr.model_path(model_info);
-            let decoder_path = model_mgr.extra_file_path("cohere-decoder-merged-q4.onnx");
+            let decoder_path = model_mgr.extra_file_path("cohere-decoder-merged-fp16.onnx");
             let tokenizer_path = model_mgr.tokenizer_path(model_info)
                 .ok_or_else(|| "Cohere tokenizer path not found".to_string())?;
             Ok(Box::new(CohereEngine::new(

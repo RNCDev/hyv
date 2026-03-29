@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use half::f16;
 use ndarray::{Array2, Array3, Array4, s};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -37,7 +38,8 @@ const PROMPT_LEN: usize = 5;
 /// Maximum new tokens to generate per chunk.
 const MAX_NEW_TOKENS: usize = 448;
 /// Number of transformer layers (determines KV-cache size).
-const N_LAYERS: usize = 32;
+/// 8 layers × 4 tensors each (decoder key/value + encoder key/value) = 32 KV inputs.
+const N_LAYERS: usize = 8;
 /// Number of KV heads.
 const N_HEADS: usize = 8;
 /// Per-head dimension.
@@ -90,10 +92,13 @@ impl CohereEngine {
         let mel: Array2<f32> = cohere_mel_spectrogram(samples);
         let n_frames = mel.nrows();
 
-        // Encoder expects [batch=1, sequence_length=n_frames, n_mels=128]
+        // Encoder expects [batch=1, sequence_length=n_frames, n_mels=128].
+        // mel may be non-contiguous (transposed), so make it contiguous first.
         let input_features: Array3<f32> = mel
+            .as_standard_layout()
             .into_shape_with_order((1, n_frames, 128))
-            .map_err(|e| format!("Cohere mel reshape failed: {e}"))?;
+            .map_err(|e| format!("Cohere mel reshape failed: {e}"))?
+            .to_owned();
 
         let mut session = self.encoder.lock()
             .map_err(|e| format!("CohereEngine encoder lock poisoned: {e}"))?;
@@ -131,14 +136,14 @@ impl CohereEngine {
         let prompt: Vec<u32> = vec![BOS, LANG_EN, pnc_token, itn_token, NOTIMESTAMP];
         let mut generated: Vec<u32> = Vec::new();
 
-        // Decoder KV-cache state.
+        // Decoder KV-cache state (fp16 — required by the fp16 decoder model).
         // Shape: [1, N_HEADS, seq_len, HEAD_DIM]
         // At step 0, seq_len = 0 (empty past).
-        let mut decoder_past: Vec<Array4<f32>> = (0..N_LAYERS * 2)
-            .map(|_| Array4::<f32>::zeros((1, N_HEADS, 0, HEAD_DIM)))
+        let mut decoder_past: Vec<Array4<f16>> = (0..N_LAYERS * 2)
+            .map(|_| Array4::<f16>::zeros((1, N_HEADS, 0, HEAD_DIM)))
             .collect();
-        let mut encoder_past: Vec<Array4<f32>> = (0..N_LAYERS * 2)
-            .map(|_| Array4::<f32>::zeros((1, N_HEADS, 0, HEAD_DIM)))
+        let mut encoder_past: Vec<Array4<f16>> = (0..N_LAYERS * 2)
+            .map(|_| Array4::<f16>::zeros((1, N_HEADS, 0, HEAD_DIM)))
             .collect();
 
         for step in 0..MAX_NEW_TOKENS {
@@ -235,11 +240,11 @@ impl CohereEngine {
                 .map_err(|e| format!("Cohere decoder run step {step}: {e}"))?;
             // session (MutexGuard) stays alive until end of block; outputs borrows from it.
 
-            // Extract logits [1, 1, 16384] → argmax over last token
+            // Extract logits [1, 1, 16384] (fp16) → argmax over last token
             let logits_val = outputs.get("logits")
                 .ok_or_else(|| format!("Cohere decoder: missing logits at step {step}"))?;
             let logits_arr = logits_val
-                .try_extract_array::<f32>()
+                .try_extract_array::<f16>()
                 .map_err(|e| format!("logits extract step {step}: {e}"))?;
             let last_logits = logits_arr.slice(s![0, 0, ..]);
             let next_token = last_logits
@@ -252,6 +257,26 @@ impl CohereEngine {
             if next_token == EOS || next_token == NOSPEECH {
                 break;
             }
+
+            // Repetition guard: stop if the same token repeats 3 times in a row,
+            // OR if the last 6 tokens form a repeating 1-, 2-, or 3-gram cycle.
+            let should_stop = {
+                let g = &generated;
+                let n = g.len();
+                let single_repeat = g.iter().rev().take(3).filter(|&&t| t == next_token).count() >= 3;
+                // bigram: [A, B, A, B] and next=A
+                let bigram_cycle = n >= 4 && next_token == g[n-2] && g[n-1] == g[n-3];
+                // trigram: [A, B, C, A, B, C] and next=A
+                let trigram_cycle = n >= 6
+                    && next_token == g[n-3]
+                    && g[n-2] == g[n-5]
+                    && g[n-1] == g[n-4];
+                single_repeat || bigram_cycle || trigram_cycle
+            };
+            if should_stop {
+                break;
+            }
+
             generated.push(next_token);
 
             // Update KV cache from present.* outputs
@@ -261,7 +286,7 @@ impl CohereEngine {
                 let dk = outputs.remove(&dk_name)
                     .ok_or_else(|| format!("missing {dk_name}"))?;
                 decoder_past[layer * 2] = dk
-                    .try_extract_array::<f32>()
+                    .try_extract_array::<f16>()
                     .map_err(|e| format!("present decoder key {layer}: {e}"))?
                     .into_dimensionality::<ndarray::Ix4>()
                     .map_err(|e| format!("present decoder key dim {layer}: {e}"))?
@@ -272,7 +297,7 @@ impl CohereEngine {
                 let dv = outputs.remove(&dv_name)
                     .ok_or_else(|| format!("missing {dv_name}"))?;
                 decoder_past[layer * 2 + 1] = dv
-                    .try_extract_array::<f32>()
+                    .try_extract_array::<f16>()
                     .map_err(|e| format!("present decoder value {layer}: {e}"))?
                     .into_dimensionality::<ndarray::Ix4>()
                     .map_err(|e| format!("present decoder value dim {layer}: {e}"))?
@@ -284,7 +309,7 @@ impl CohereEngine {
                     let ek = outputs.remove(&ek_name)
                         .ok_or_else(|| format!("missing {ek_name}"))?;
                     encoder_past[layer * 2] = ek
-                        .try_extract_array::<f32>()
+                        .try_extract_array::<f16>()
                         .map_err(|e| format!("present encoder key {layer}: {e}"))?
                         .into_dimensionality::<ndarray::Ix4>()
                         .map_err(|e| format!("present encoder key dim {layer}: {e}"))?
@@ -294,7 +319,7 @@ impl CohereEngine {
                     let ev = outputs.remove(&ev_name)
                         .ok_or_else(|| format!("missing {ev_name}"))?;
                     encoder_past[layer * 2 + 1] = ev
-                        .try_extract_array::<f32>()
+                        .try_extract_array::<f16>()
                         .map_err(|e| format!("present encoder value {layer}: {e}"))?
                         .into_dimensionality::<ndarray::Ix4>()
                         .map_err(|e| format!("present encoder value dim {layer}: {e}"))?

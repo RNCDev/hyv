@@ -108,25 +108,30 @@ impl ModelInfo {
         let base = "https://huggingface.co/onnx-community/cohere-transcribe-03-2026-ONNX/resolve/main/onnx";
         Self {
             name: "cohere-transcribe".into(),
-            filename: "cohere-encoder-q4.onnx".into(),
-            url: format!("{base}/encoder_model_q4.onnx"),
-            size_bytes: 1_400_792,
+            filename: "cohere-encoder-fp16.onnx".into(),
+            url: format!("{base}/encoder_model_fp16.onnx"),
+            size_bytes: 1_192_583,
             kind: ModelKind::CohereOnnx,
             extra_files: vec![
                 (
-                    "cohere-encoder-q4.onnx_data".into(),
-                    format!("{base}/encoder_model_q4.onnx_data"),
-                    2_016_067_072,
+                    "encoder_model_fp16.onnx_data".into(),
+                    format!("{base}/encoder_model_fp16.onnx_data"),
+                    2_094_166_528,
                 ),
                 (
-                    "cohere-decoder-merged-q4.onnx".into(),
-                    format!("{base}/decoder_model_merged_q4.onnx"),
-                    193_099,
+                    "encoder_model_fp16.onnx_data_1".into(),
+                    format!("{base}/encoder_model_fp16.onnx_data_1"),
+                    1_698_889_728,
                 ),
                 (
-                    "cohere-decoder-merged-q4.onnx_data".into(),
-                    format!("{base}/decoder_model_merged_q4.onnx_data"),
-                    108_855_296,
+                    "cohere-decoder-merged-fp16.onnx".into(),
+                    format!("{base}/decoder_model_merged_fp16.onnx"),
+                    155_297,
+                ),
+                (
+                    "decoder_model_merged_fp16.onnx_data".into(),
+                    format!("{base}/decoder_model_merged_fp16.onnx_data"),
+                    337_993_728,
                 ),
             ],
         }

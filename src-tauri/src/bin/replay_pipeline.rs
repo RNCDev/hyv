@@ -16,8 +16,9 @@ use hyv_lib::{
     audio::aec,
     commands::{align_channels_pub, deduplicate_bleed_pub, run_channel_pipeline},
     text_util::normalize_words,
+    transcription::cohere::{CohereDecodeOptions, CohereEngine},
     transcription::engine::{TranscriptionEngine, WhisperEngine},
-    transcription::model_manager::{ModelInfo, ModelManager},
+    transcription::model_manager::{ModelInfo, ModelManager, ModelKind},
     output::transcript_writer,
 };
 use std::path::PathBuf;
@@ -34,7 +35,7 @@ struct Args {
     #[arg(long)]
     system: PathBuf,
 
-    /// Model name: medium | large-v3-turbo | distil-large-v3 | large-v3 (default: medium)
+    /// Model name: medium | large-v3-turbo | distil-large-v3 | large-v3 | cohere-transcribe (default: medium)
     #[arg(long, default_value = "medium")]
     model: String,
 
@@ -77,13 +78,27 @@ fn main() -> Result<(), String> {
 
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
     let model_info = ModelInfo::by_name(&args.model)
-        .ok_or_else(|| format!("Unknown model '{}'. Valid: medium, large-v3-turbo, distil-large-v3, large-v3", args.model))?;
+        .ok_or_else(|| format!("Unknown model '{}'. Valid: medium, large-v3-turbo, distil-large-v3, large-v3, cohere-transcribe", args.model))?;
     eprintln!("--- Model: {} ({} MB) ---", model_info.name, model_info.size_bytes / 1_000_000);
     let model_path = model_mgr.model_path(&model_info);
     if !model_path.exists() {
         return Err(format!("Model not downloaded: {}", model_path.display()));
     }
-    let engine: Box<dyn TranscriptionEngine> = Box::new(WhisperEngine::new(&model_path)?);
+    let engine: Box<dyn TranscriptionEngine> = match model_info.kind {
+        ModelKind::CohereOnnx => {
+            let decoder_path = model_mgr.extra_file_path("cohere-decoder-merged-fp16.onnx");
+            let tokenizer_path = model_mgr.tokenizer_path(&model_info)
+                .ok_or_else(|| "Cohere tokenizer path not found".to_string())?;
+            if !decoder_path.exists() {
+                return Err(format!("Cohere decoder not downloaded: {}", decoder_path.display()));
+            }
+            if !tokenizer_path.exists() {
+                return Err(format!("Cohere tokenizer not downloaded: {}", tokenizer_path.display()));
+            }
+            Box::new(CohereEngine::new(&model_path, &decoder_path, &tokenizer_path, CohereDecodeOptions::default())?)
+        }
+        _ => Box::new(WhisperEngine::new(&model_path)?),
+    };
 
     let progress = |_frac: f64, msg: &str| eprintln!("  {msg}");
 
