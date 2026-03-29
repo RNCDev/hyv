@@ -258,6 +258,25 @@ fn process_recording(
 
     let mut all_segments = Vec::new();
 
+    // System channel first — clean TTS audio, high-confidence transcript.
+    // Its segments are then used as rolling context when transcribing the mic.
+    let sys_segments = if !system_audio.is_empty() {
+        let segs = process_channel(
+            &system_audio,
+            "Speaker 2",
+            PROGRESS_SYS_START,
+            PROGRESS_SYS_RANGE,
+            &engine,
+            true, // use_beam_search: Beam Search for clean system audio channel
+            &[],  // no prior context for system channel
+            app,
+        )?;
+        all_segments.extend(segs.clone());
+        segs
+    } else {
+        Vec::new()
+    };
+
     if !mic_audio.is_empty() {
         let mic_segments = process_channel(
             &mic_audio,
@@ -265,23 +284,11 @@ fn process_recording(
             PROGRESS_MIC_START,
             PROGRESS_MIC_RANGE,
             &engine,
-            false, // use_beam_search: Greedy for noisy mic channel
+            false,        // use_beam_search: Greedy for noisy mic channel
+            &sys_segments, // inject system transcript as rolling context
             app,
         )?;
         all_segments.extend(mic_segments);
-    }
-
-    if !system_audio.is_empty() {
-        let sys_segments = process_channel(
-            &system_audio,
-            "Speaker 2",
-            PROGRESS_SYS_START,
-            PROGRESS_SYS_RANGE,
-            &engine,
-            true, // use_beam_search: Beam Search for clean system audio channel
-            app,
-        )?;
-        all_segments.extend(sys_segments);
     }
 
     // Align channel timestamps: the mic and system buffers may have different
@@ -309,7 +316,8 @@ pub fn run_channel_pipeline(
     speaker: &str,
     engine: &WhisperEngine,
     use_beam_search: bool,
-    initial_prompt: &str,
+    base_prompt: &str,
+    context_segments: &[TranscribedSegment],
     progress: &dyn Fn(f64, &str),
 ) -> Result<Vec<TranscribedSegment>, String> {
     let speech = vad::find_speech_segments(
@@ -328,7 +336,7 @@ pub fn run_channel_pipeline(
 
     progress(0.0, &format!("Transcribing {speaker} ({} chunks)...", chunks.len()));
 
-    engine.transcribe_channel(&chunks, speaker, use_beam_search, initial_prompt, |done, total| {
+    engine.transcribe_channel(&chunks, speaker, use_beam_search, base_prompt, context_segments, |done, total| {
         let pct = done as f64 / total as f64;
         progress(pct, &format!("Transcribing {speaker}: {done}/{total}"));
     })
@@ -347,11 +355,12 @@ fn process_channel(
     progress_range: f64,
     engine: &WhisperEngine,
     use_beam_search: bool,
+    context_segments: &[TranscribedSegment],
     app: &AppHandle,
 ) -> Result<Vec<TranscribedSegment>, String> {
     let prompt = if speaker == "Speaker 2" { PROMPT_SYSTEM } else { PROMPT_MIC };
     update_progress(app, progress_start, &format!("Analyzing {speaker} audio..."));
-    run_channel_pipeline(audio, speaker, engine, use_beam_search, prompt, &|frac, msg| {
+    run_channel_pipeline(audio, speaker, engine, use_beam_search, prompt, context_segments, &|frac, msg| {
         let pct = progress_start + frac * progress_range;
         update_progress(app, pct, msg);
     })

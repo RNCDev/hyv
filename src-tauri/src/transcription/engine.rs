@@ -97,6 +97,9 @@ impl WhisperEngine {
             if text.is_empty() || text.chars().all(|c| !c.is_alphanumeric()) {
                 continue;
             }
+            // Normalize brand name variants that Whisper produces when the word
+            // appears in both the prompt context and the audio (token doubling).
+            let text = normalize_brand_names(&text);
 
             let start_cs = state
                 .full_get_segment_t0(i)
@@ -124,21 +127,59 @@ impl WhisperEngine {
         Ok(segments)
     }
 
+    /// Transcribe all chunks for one channel.
+    ///
+    /// `base_prompt` is always prepended (e.g. "Vapi").
+    /// `context_segments` is an optional slice of already-transcribed segments
+    /// from the *other* channel — typically Speaker 2 (clean system audio).
+    /// For each mic chunk, the function collects Speaker 2 text that falls in a
+    /// window ending at the chunk's start time and appends it after the base
+    /// prompt, giving Whisper the conversational context it needs to decode
+    /// short or ambiguous user responses accurately.
     pub fn transcribe_channel<F>(
         &self,
         chunks: &[AudioChunk],
         speaker: &str,
         use_beam_search: bool,
-        initial_prompt: &str,
+        base_prompt: &str,
+        context_segments: &[TranscribedSegment],
         progress: F,
     ) -> Result<Vec<TranscribedSegment>, String>
     where
         F: Fn(usize, usize),
     {
+        // Exclude context that ended within this many seconds of the chunk start.
+        // Whisper echoes very-recent prompt tokens into its output, causing doubled
+        // words (e.g. "Vapi" → "Vaapi"). A small exclusion gap prevents this.
+        const CONTEXT_RECENCY_GUARD_SECS: f64 = 10.0;
+
         let mut all_segments = Vec::new();
 
         for (i, chunk) in chunks.iter().enumerate() {
-            let mut segments = self.transcribe_chunk(chunk, use_beam_search, initial_prompt)?;
+            // Build dynamic prompt: base + recent other-channel text
+            let prompt = if context_segments.is_empty() {
+                base_prompt.to_string()
+            } else {
+                let context_cutoff = chunk.offset_secs - CONTEXT_RECENCY_GUARD_SECS;
+                // Use only the single most-recent eligible segment — just enough
+                // for Whisper to know what was asked, without accumulating multiple
+                // "Vapi" mentions that cause token-doubling artifacts.
+                let context_text: String = context_segments
+                    .iter()
+                    .filter(|s| s.start < context_cutoff)
+                    .last()
+                    .map(|s| s.text.trim())
+                    .unwrap_or("")
+                    .to_string();
+
+                if context_text.is_empty() {
+                    base_prompt.to_string()
+                } else {
+                    format!("{base_prompt} {context_text}")
+                }
+            };
+
+            let mut segments = self.transcribe_chunk(chunk, use_beam_search, &prompt)?;
             for seg in &mut segments {
                 seg.speaker = speaker.to_string();
             }
@@ -148,6 +189,30 @@ impl WhisperEngine {
 
         Ok(all_segments)
     }
+}
+
+/// Fix brand-name token-doubling artifacts that Whisper produces when the word
+/// appears in both the context prompt and the audio (e.g. "Vaapi" → "Vapi",
+/// "VVapi" → "Vapi"). Uses a regex-free approach for zero extra dependencies.
+fn normalize_brand_names(text: &str) -> String {
+    // Patterns Whisper produces for "Vapi" via token doubling
+    const VARIANTS: &[(&str, &str)] = &[
+        ("Vaapi", "Vapi"),
+        ("VVapi", "Vapi"),
+        ("vaapi", "Vapi"),
+        ("vvapi", "Vapi"),
+        ("VAAPI", "Vapi"),
+        ("Bapi", "Vapi"),
+        ("BAPI", "Vapi"),
+        ("bapi", "Vapi"),
+    ];
+    let mut out = text.to_string();
+    for (bad, good) in VARIANTS {
+        if out.contains(bad) {
+            out = out.replace(bad, good);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
