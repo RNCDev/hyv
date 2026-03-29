@@ -13,6 +13,19 @@ pub struct TranscribedSegment {
     pub text: String,
 }
 
+/// Common interface for all transcription backends (Whisper, Parakeet, Cohere).
+pub trait TranscriptionEngine: Send + Sync {
+    fn transcribe_channel(
+        &self,
+        chunks: &[AudioChunk],
+        speaker: &str,
+        use_beam_search: bool,
+        base_prompt: &str,
+        context_segments: &[TranscribedSegment],
+        progress: &dyn Fn(usize, usize),
+    ) -> Result<Vec<TranscribedSegment>, String>;
+}
+
 pub struct WhisperEngine {
     ctx: WhisperContext,
 }
@@ -136,18 +149,15 @@ impl WhisperEngine {
     /// window ending at the chunk's start time and appends it after the base
     /// prompt, giving Whisper the conversational context it needs to decode
     /// short or ambiguous user responses accurately.
-    pub fn transcribe_channel<F>(
+    pub fn transcribe_channel_whisper(
         &self,
         chunks: &[AudioChunk],
         speaker: &str,
         use_beam_search: bool,
         base_prompt: &str,
         context_segments: &[TranscribedSegment],
-        progress: F,
-    ) -> Result<Vec<TranscribedSegment>, String>
-    where
-        F: Fn(usize, usize),
-    {
+        progress: &dyn Fn(usize, usize),
+    ) -> Result<Vec<TranscribedSegment>, String> {
         // Exclude context that ended within this many seconds of the chunk start.
         // Whisper echoes very-recent prompt tokens into its output, causing doubled
         // words (e.g. "Vapi" → "Vaapi"). A small exclusion gap prevents this.
@@ -188,6 +198,20 @@ impl WhisperEngine {
         }
 
         Ok(all_segments)
+    }
+}
+
+impl TranscriptionEngine for WhisperEngine {
+    fn transcribe_channel(
+        &self,
+        chunks: &[AudioChunk],
+        speaker: &str,
+        use_beam_search: bool,
+        base_prompt: &str,
+        context_segments: &[TranscribedSegment],
+        progress: &dyn Fn(usize, usize),
+    ) -> Result<Vec<TranscribedSegment>, String> {
+        self.transcribe_channel_whisper(chunks, speaker, use_beam_search, base_prompt, context_segments, progress)
     }
 }
 
