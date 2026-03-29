@@ -44,4 +44,16 @@ impl Tokenizer {
             .join("");
         raw.replace('\u{2581}', " ").trim().to_string()
     }
+
+    /// Decode wav2vec2 CTC output: character tokens where `|` = word boundary → space.
+    /// Special tokens (<pad>, <s>, </s>, <unk>) are skipped.
+    pub fn decode_wav2vec2(&self, ids: &[u32]) -> String {
+        ids.iter()
+            .filter_map(|id| self.vocab.get(id))
+            .filter(|t| !matches!(t.as_str(), "<pad>" | "<s>" | "</s>" | "<unk>"))
+            .map(|t| if t == "|" { " " } else { t.as_str() })
+            .collect::<String>()
+            .trim()
+            .to_lowercase()
+    }
 }

@@ -27,7 +27,7 @@ impl ModelInfo {
         vec![
             Self::large_v3_turbo(),
             Self::medium(),
-            Self::parakeet_tdt_0_6b(),
+            Self::wav2vec2(),
             Self::cohere_transcribe(),
         ]
     }
@@ -85,12 +85,14 @@ impl ModelInfo {
         }
     }
 
-    pub fn parakeet_tdt_0_6b() -> Self {
+    /// wav2vec2-base-960h: Facebook's CTC model, 91 MB int8 ONNX, English only.
+    /// Single-file, raw waveform input, character-level CTC output.
+    pub fn wav2vec2() -> Self {
         ModelInfo {
-            name: "parakeet-tdt-0.6b".into(),
-            filename: "parakeet-tdt-0.6b-v2.onnx".into(),
-            url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/model.onnx".into(),
-            size_bytes: 2_400_000_000,
+            name: "wav2vec2".into(),
+            filename: "wav2vec2-base-960h-int8.onnx".into(),
+            url: "https://huggingface.co/Xenova/wav2vec2-base-960h/resolve/main/onnx/model_int8.onnx".into(),
+            size_bytes: 95_286_006,
             kind: ModelKind::ParakeetOnnx,
         }
     }
@@ -227,7 +229,7 @@ impl ModelManager {
         F: Fn(u64, u64) + Send + 'static,
     {
         let tokenizer_url = match model.kind {
-            ModelKind::ParakeetOnnx => "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/tokenizer.json",
+            ModelKind::ParakeetOnnx => "https://huggingface.co/Xenova/wav2vec2-base-960h/resolve/main/tokenizer.json",
             ModelKind::CohereOnnx   => "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026-onnx/resolve/main/tokenizer.json",
             ModelKind::Whisper      => return Ok(()),
         };

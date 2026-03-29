@@ -1,27 +1,20 @@
-//! Parakeet-TDT ONNX inference.
+//! Wav2Vec2 CTC ONNX inference.
 //!
-//! Model: istupakov/parakeet-tdt-0.6b-v2-onnx
-//! Architecture: CTC encoder. No decoder prompt (non-autoregressive).
+//! Model: Xenova/wav2vec2-base-960h (int8, ~91 MB)
+//! Architecture: CTC encoder, raw waveform input, character-level output.
 //!
-//! Input node:  "processed_signal"  shape [1, N_MELS, n_frames]  f32
-//! Input node:  "length"            shape [1]                     i64
-//! Output node: "logprobs" or similar  shape [1, T', vocab]        f32
+//! Input:  "input_values"  shape [1, T]  f32  (16kHz mono, normalised to mean=0 std=1)
+//! Output: "logits"        shape [1, T', 32]  f32  (32-token char vocab)
 //!
-//! NOTE: Verify input/output names against the downloaded model with Netron
-//! (https://netron.app). Names are logged on first call.
+//! Vocab: <pad>=0 (blank), <s>=1, </s>=2, <unk>=3, |=4 (word boundary), A-Z + '
 
-use ndarray::{Array1, Order};
+use ndarray::Array2;
 use ort::session::Session;
 use ort::value::{DynTensorValueType, Tensor};
 
-use crate::transcription::{
-    engine::TranscribedSegment,
-    mel::log_mel_spectrogram,
-    tokenizer::Tokenizer,
-};
+use crate::transcription::{engine::TranscribedSegment, tokenizer::Tokenizer};
 
-/// Run Parakeet-TDT inference on 16kHz mono samples.
-/// `tokenizer` is `None` until Task 8 wires it up — returns placeholder text when None.
+/// Run wav2vec2 CTC inference on 16kHz mono samples.
 pub fn transcribe(
     session: &mut Session,
     samples: &[f32],
@@ -33,68 +26,65 @@ pub fn transcribe(
         return Ok(vec![]);
     }
 
-    // Log input/output names to aid Netron verification
     tracing::debug!(
-        "Parakeet session inputs: {:?}",
+        "wav2vec2 session inputs: {:?}",
         session.inputs.iter().map(|i| &i.name).collect::<Vec<_>>()
     );
     tracing::debug!(
-        "Parakeet session outputs: {:?}",
+        "wav2vec2 session outputs: {:?}",
         session.outputs.iter().map(|o| &o.name).collect::<Vec<_>>()
     );
 
-    // Mel spectrogram [N_MELS, n_frames] → [1, N_MELS, n_frames]
-    let mel = log_mel_spectrogram(samples);
-    let (n_mels, n_frames) = mel.dim();
-    let mel_3d = mel
-        .into_shape_with_order(((1, n_mels, n_frames), Order::RowMajor))
-        .map_err(|e| format!("mel reshape: {e}"))?;
+    // Normalise to zero-mean unit-variance (wav2vec2 feature extractor default)
+    let mean = samples.iter().copied().sum::<f32>() / samples.len() as f32;
+    let variance = samples.iter().map(|&x| (x - mean).powi(2)).sum::<f32>() / samples.len() as f32;
+    let std = variance.sqrt().max(1e-7);
+    let normalised: Vec<f32> = samples.iter().map(|&x| (x - mean) / std).collect();
 
-    let length = Array1::<i64>::from_vec(vec![n_frames as i64]);
+    // Input: [1, T]
+    let input = Array2::from_shape_vec((1, normalised.len()), normalised)
+        .map_err(|e| format!("wav2vec2 input shape: {e}"))?;
 
-    let mel_tensor = Tensor::from_array(mel_3d)
-        .map_err(|e| format!("Parakeet mel tensor: {e}"))?;
-    let len_tensor = Tensor::from_array(length)
-        .map_err(|e| format!("Parakeet length tensor: {e}"))?;
+    let input_tensor =
+        Tensor::from_array(input).map_err(|e| format!("wav2vec2 input tensor: {e}"))?;
 
     let outputs = session
-        .run(ort::inputs![
-            "processed_signal" => mel_tensor,
-            "length"           => len_tensor,
-        ])
-        .map_err(|e| format!("Parakeet inference: {e}"))?;
+        .run(ort::inputs!["input_values" => input_tensor])
+        .map_err(|e| format!("wav2vec2 inference: {e}"))?;
 
-    // Extract log_probs [1, T', vocab] via DynTensor downcast
+    // Output: "logits" [1, T', 32]
     let dyn_tensor = outputs[0]
         .downcast_ref::<DynTensorValueType>()
-        .map_err(|e| format!("Parakeet output downcast: {e}"))?;
-    let (shape, log_probs_data) = dyn_tensor
+        .map_err(|e| format!("wav2vec2 output downcast: {e}"))?;
+    let (shape, logits) = dyn_tensor
         .try_extract_tensor::<f32>()
-        .map_err(|e| format!("Parakeet output extract: {e}"))?;
+        .map_err(|e| format!("wav2vec2 output extract: {e}"))?;
 
-    // shape is [1, T', vocab]
     let (t_frames, vocab_size) = (shape[1] as usize, shape[2] as usize);
+    tracing::debug!("wav2vec2 output shape: [1, {t_frames}, {vocab_size}]");
 
-    tracing::debug!("Parakeet output shape: [1, {t_frames}, {vocab_size}]");
-
-    // Greedy CTC argmax — returns token IDs
-    let token_ids = greedy_ctc_token_ids(log_probs_data, t_frames, vocab_size);
+    // Greedy CTC: argmax per frame, collapse repeats, remove blank (token 0)
+    let token_ids = greedy_ctc_token_ids(logits, t_frames, vocab_size);
 
     if token_ids.is_empty() {
         return Ok(vec![]);
     }
 
-    // Decode token IDs if tokenizer is available, else placeholder
     let text = match tokenizer {
-        Some(tok) => tok.decode(&token_ids),
-        None => format!("[Parakeet stub: {} CTC tokens]", token_ids.len()),
+        Some(tok) => {
+            // wav2vec2 vocab: chars are uppercase, '|' = word boundary → space
+            let raw = tok.decode_wav2vec2(&token_ids);
+            raw
+        }
+        None => format!("[wav2vec2: {} tokens]", token_ids.len()),
     };
 
     if text.trim().is_empty() {
         return Ok(vec![]);
     }
 
-    let duration = t_frames as f64 * 0.04; // ~40ms per output frame
+    // Each output frame ≈ 20ms (wav2vec2 conv downsampling ~320x at 16kHz)
+    let duration = t_frames as f64 * 0.02;
 
     Ok(vec![TranscribedSegment {
         start: offset_secs,
@@ -105,13 +95,12 @@ pub fn transcribe(
 }
 
 /// Greedy CTC decode: argmax per frame, collapse repeats, remove blank (token 0).
-/// Returns raw token IDs for the tokenizer to convert to text.
-pub fn greedy_ctc_token_ids(log_probs: &[f32], t_frames: usize, vocab_size: usize) -> Vec<u32> {
+pub fn greedy_ctc_token_ids(logits: &[f32], t_frames: usize, vocab_size: usize) -> Vec<u32> {
     let mut tokens: Vec<u32> = Vec::with_capacity(t_frames);
     let mut prev = u32::MAX;
 
     for t in 0..t_frames {
-        let frame = &log_probs[t * vocab_size..(t + 1) * vocab_size];
+        let frame = &logits[t * vocab_size..(t + 1) * vocab_size];
         let argmax = frame
             .iter()
             .enumerate()
