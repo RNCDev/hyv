@@ -167,20 +167,36 @@ impl ModelManager {
             "Downloading model"
         );
 
+        self.download_url(&model.url, &path, model.size_bytes, progress).await?;
+        Ok(path)
+    }
+
+    /// Download `url` to `dest`, reporting progress via callback.
+    /// `hint_bytes` is used as the total size fallback when Content-Length is absent.
+    async fn download_url<F>(
+        &self,
+        url: &str,
+        dest: &std::path::Path,
+        hint_bytes: u64,
+        progress: F,
+    ) -> Result<(), String>
+    where
+        F: Fn(u64, u64) + Send + 'static,
+    {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(600))
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
         let response = client
-            .get(&model.url)
+            .get(url)
             .send()
             .await
             .map_err(|e| format!("Download request failed: {e}"))?;
 
-        let total = response.content_length().unwrap_or(model.size_bytes);
+        let total = response.content_length().unwrap_or(hint_bytes);
         let mut downloaded: u64 = 0;
 
-        let temp_path = path.with_extension("tmp");
+        let temp_path = dest.with_extension("tmp");
         let mut file = tokio::fs::File::create(&temp_path)
             .await
             .map_err(|e| format!("Failed to create temp file: {e}"))?;
@@ -196,17 +212,32 @@ impl ModelManager {
         }
 
         // Rename temp to final; clean up temp file if rename fails
-        if let Err(e) = tokio::fs::rename(&temp_path, &path).await {
+        if let Err(e) = tokio::fs::rename(&temp_path, dest).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(format!("Failed to finalize model file: {e}"));
+            return Err(format!("Failed to finalize file: {e}"));
         }
 
-        info!(
-            model = %model.name,
-            size_mb = downloaded / 1_000_000,
-            "Model download complete"
-        );
+        info!(size_mb = downloaded / 1_000_000, dest = %dest.display(), "Download complete");
+        Ok(())
+    }
 
-        Ok(path)
+    /// Download tokenizer JSON alongside the ONNX model if not already present.
+    pub async fn ensure_tokenizer<F>(&self, model: &ModelInfo, progress: F) -> Result<(), String>
+    where
+        F: Fn(u64, u64) + Send + 'static,
+    {
+        let tokenizer_url = match model.kind {
+            ModelKind::ParakeetOnnx => "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/tokenizer.json",
+            ModelKind::CohereOnnx   => "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026-onnx/resolve/main/tokenizer.json",
+            ModelKind::Whisper      => return Ok(()),
+        };
+        let dest = match self.tokenizer_path(model) {
+            Some(p) => p,
+            None => return Ok(()),
+        };
+        if dest.exists() {
+            return Ok(());
+        }
+        self.download_url(tokenizer_url, &dest, 0, progress).await
     }
 }
