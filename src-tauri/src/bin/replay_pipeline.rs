@@ -34,6 +34,10 @@ struct Args {
     #[arg(long)]
     system: PathBuf,
 
+    /// Model name: medium | large-v3-turbo | distil-large-v3 | large-v3 (default: medium)
+    #[arg(long, default_value = "medium")]
+    model: String,
+
     /// Optional ground truth file for WER scoring
     #[arg(long)]
     ground_truth: Option<PathBuf>,
@@ -72,8 +76,13 @@ fn main() -> Result<(), String> {
     };
 
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
-    let model_info = ModelInfo::medium();
+    let model_info = ModelInfo::by_name(&args.model)
+        .ok_or_else(|| format!("Unknown model '{}'. Valid: medium, large-v3-turbo, distil-large-v3, large-v3", args.model))?;
+    eprintln!("--- Model: {} ({} MB) ---", model_info.name, model_info.size_bytes / 1_000_000);
     let model_path = model_mgr.model_path(&model_info);
+    if !model_path.exists() {
+        return Err(format!("Model not downloaded: {}", model_path.display()));
+    }
     let engine = WhisperEngine::new(&model_path)?;
 
     let progress = |_frac: f64, msg: &str| eprintln!("  {msg}");
