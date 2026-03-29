@@ -19,7 +19,7 @@ use ort::value::Tensor;
 
 use crate::transcription::{
     engine::TranscribedSegment,
-    mel::{log_mel_spectrogram, N_MELS},
+    mel::log_mel_spectrogram,
 };
 
 /// Run Cohere ONNX inference on 16kHz mono samples.
