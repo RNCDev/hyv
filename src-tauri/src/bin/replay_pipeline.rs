@@ -78,7 +78,7 @@ fn main() -> Result<(), String> {
 
     let model_mgr = ModelManager::new().map_err(|e| e.to_string())?;
     let model_info = ModelInfo::by_name(&args.model)
-        .ok_or_else(|| format!("Unknown model '{}'. Valid: medium, large-v3-turbo, distil-large-v3, large-v3, cohere-transcribe", args.model))?;
+        .ok_or_else(|| format!("Unknown model '{}'. Valid: {}", args.model, ModelInfo::all().iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", ")))?;
     eprintln!("--- Model: {} ({} MB) ---", model_info.name, model_info.size_bytes / 1_000_000);
     let model_path = model_mgr.model_path(&model_info);
     if !model_path.exists() {

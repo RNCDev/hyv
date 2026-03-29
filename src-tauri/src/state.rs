@@ -33,7 +33,7 @@ impl AppState {
             system_buffer: Arc::new(Mutex::new(Vec::new())),
             mic_buffer: Arc::new(Mutex::new(Vec::new())),
             recording_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            selected_model: Mutex::new(ModelInfo::large_v3_turbo()),
+            selected_model: Mutex::new(ModelInfo::cohere_transcribe()),
         }
     }
 }

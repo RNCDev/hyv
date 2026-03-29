@@ -20,7 +20,7 @@ interface Props {
 
 export function ModelSelector({ disabled }: Props) {
   const [models, setModels] = useState<ModelInfo[]>([]);
-  const [active, setActive] = useState<string>("medium");
+  const [active, setActive] = useState<string>("cohere-transcribe");
 
   useEffect(() => {
     Promise.all([listModels(), getActiveModel()]).then(([all, current]) => {

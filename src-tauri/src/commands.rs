@@ -253,15 +253,6 @@ fn build_engine(
 
     match model_info.kind {
         ModelKind::Whisper => Ok(Box::new(WhisperEngine::new(model_path)?)),
-        ModelKind::ParakeetOnnx => {
-            use crate::transcription::onnx_engine::OnnxEngine;
-            let tokenizer_path = model_mgr.tokenizer_path(model_info);
-            Ok(Box::new(OnnxEngine::new(
-                model_path,
-                model_info.kind.clone(),
-                tokenizer_path.as_deref(),
-            )?))
-        }
         ModelKind::CohereOnnx => {
             use crate::transcription::cohere::{CohereEngine, CohereDecodeOptions};
             let encoder_path = model_mgr.model_path(model_info);

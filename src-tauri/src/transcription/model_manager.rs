@@ -9,7 +9,6 @@ const MODELS_DIR: &str = "models";
 #[serde(rename_all = "snake_case")]
 pub enum ModelKind {
     Whisper,
-    ParakeetOnnx,
     CohereOnnx,
 }
 
@@ -29,7 +28,6 @@ impl ModelInfo {
         vec![
             Self::large_v3_turbo(),
             Self::medium(),
-            Self::wav2vec2(),
             Self::cohere_transcribe(),
         ]
     }
@@ -60,46 +58,6 @@ impl ModelInfo {
                 .to_string(),
             size_bytes: 1_620_000_000,
             kind: ModelKind::Whisper,
-            extra_files: vec![],
-        }
-    }
-
-    /// distil-large-v3: Knowledge-distilled large-v3, ~6x faster, within 1% WER.
-    /// Best accuracy/speed tradeoff for Apple Silicon. 1.5 GB.
-    pub fn distil_large_v3() -> Self {
-        Self {
-            name: "distil-large-v3".to_string(),
-            filename: "ggml-distil-large-v3.bin".to_string(),
-            url: "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin"
-                .to_string(),
-            size_bytes: 1_515_000_000,
-            kind: ModelKind::Whisper,
-            extra_files: vec![],
-        }
-    }
-
-    /// large-v3: Full accuracy, 3.1 GB. Slowest but most capable.
-    pub fn large_v3() -> Self {
-        Self {
-            name: "large-v3".to_string(),
-            filename: "ggml-large-v3.bin".to_string(),
-            url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
-                .to_string(),
-            size_bytes: 3_094_623_691,
-            kind: ModelKind::Whisper,
-            extra_files: vec![],
-        }
-    }
-
-    /// wav2vec2-base-960h: Facebook's CTC model, 91 MB int8 ONNX, English only.
-    /// Single-file, raw waveform input, character-level CTC output.
-    pub fn wav2vec2() -> Self {
-        ModelInfo {
-            name: "wav2vec2".into(),
-            filename: "wav2vec2-base-960h-int8.onnx".into(),
-            url: "https://huggingface.co/Xenova/wav2vec2-base-960h/resolve/main/onnx/model_int8.onnx".into(),
-            size_bytes: 95_286_006,
-            kind: ModelKind::ParakeetOnnx,
             extra_files: vec![],
         }
     }
@@ -182,9 +140,8 @@ impl ModelManager {
     /// Path for the tokenizer JSON co-located with the ONNX model.
     pub fn tokenizer_path(&self, model: &ModelInfo) -> Option<std::path::PathBuf> {
         match model.kind {
-            ModelKind::ParakeetOnnx => Some(self.models_dir.join("parakeet-tokenizer.json")),
-            ModelKind::CohereOnnx   => Some(self.models_dir.join("cohere-tokenizer.json")),
-            ModelKind::Whisper      => None,
+            ModelKind::CohereOnnx => Some(self.models_dir.join("cohere-tokenizer.json")),
+            ModelKind::Whisper    => None,
         }
     }
 
@@ -303,9 +260,8 @@ impl ModelManager {
         F: Fn(u64, u64) + Send + 'static,
     {
         let tokenizer_url = match model.kind {
-            ModelKind::ParakeetOnnx => "https://huggingface.co/Xenova/wav2vec2-base-960h/resolve/main/tokenizer.json",
-            ModelKind::CohereOnnx   => "https://huggingface.co/onnx-community/cohere-transcribe-03-2026-ONNX/resolve/main/tokenizer.json",
-            ModelKind::Whisper      => return Ok(()),
+            ModelKind::CohereOnnx => "https://huggingface.co/onnx-community/cohere-transcribe-03-2026-ONNX/resolve/main/tokenizer.json",
+            ModelKind::Whisper    => return Ok(()),
         };
         let dest = match self.tokenizer_path(model) {
             Some(p) => p,

@@ -45,18 +45,6 @@ impl Tokenizer {
         raw.replace('\u{2581}', " ").trim().to_string()
     }
 
-    /// Decode wav2vec2 CTC output: character tokens where `|` = word boundary → space.
-    /// Special tokens (<pad>, <s>, </s>, <unk>) are skipped.
-    pub fn decode_wav2vec2(&self, ids: &[u32]) -> String {
-        ids.iter()
-            .filter_map(|id| self.vocab.get(id))
-            .filter(|t| !matches!(t.as_str(), "<pad>" | "<s>" | "</s>" | "<unk>"))
-            .map(|t| if t == "|" { " " } else { t.as_str() })
-            .collect::<String>()
-            .trim()
-            .to_lowercase()
-    }
-
     /// Decode token IDs, filtering out any special tokens below `threshold`.
     /// Used by CohereEngine to strip prompt and control tokens (IDs 0–13) from output.
     pub fn decode_filtering_specials(&self, ids: &[u32], threshold: u32) -> String {
