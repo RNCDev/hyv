@@ -5,12 +5,21 @@ use tracing::info;
 
 const MODELS_DIR: &str = "models";
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelKind {
+    Whisper,
+    ParakeetOnnx,
+    CohereOnnx,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelInfo {
     pub name: String,
     pub filename: String,
     pub url: String,
     pub size_bytes: u64,
+    pub kind: ModelKind,
 }
 
 impl ModelInfo {
@@ -18,6 +27,8 @@ impl ModelInfo {
         vec![
             Self::large_v3_turbo(),
             Self::medium(),
+            Self::parakeet_tdt_0_6b(),
+            Self::cohere_transcribe(),
         ]
     }
 
@@ -32,6 +43,7 @@ impl ModelInfo {
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
                 .to_string(),
             size_bytes: 1_533_774_781,
+            kind: ModelKind::Whisper,
         }
     }
 
@@ -44,6 +56,7 @@ impl ModelInfo {
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
                 .to_string(),
             size_bytes: 1_620_000_000,
+            kind: ModelKind::Whisper,
         }
     }
 
@@ -56,6 +69,7 @@ impl ModelInfo {
             url: "https://huggingface.co/distil-whisper/distil-large-v3-ggml/resolve/main/ggml-distil-large-v3.bin"
                 .to_string(),
             size_bytes: 1_515_000_000,
+            kind: ModelKind::Whisper,
         }
     }
 
@@ -67,6 +81,28 @@ impl ModelInfo {
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3.bin"
                 .to_string(),
             size_bytes: 3_094_623_691,
+            kind: ModelKind::Whisper,
+        }
+    }
+
+    pub fn parakeet_tdt_0_6b() -> Self {
+        ModelInfo {
+            name: "parakeet-tdt-0.6b".into(),
+            filename: "parakeet-tdt-0.6b-v2.onnx".into(),
+            url: "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v2-onnx/resolve/main/model.onnx".into(),
+            size_bytes: 2_400_000_000,
+            kind: ModelKind::ParakeetOnnx,
+        }
+    }
+
+    pub fn cohere_transcribe() -> Self {
+        // NOTE: URL is best-effort — verify at HuggingFace before download is triggered
+        ModelInfo {
+            name: "cohere-transcribe".into(),
+            filename: "cohere-transcribe-q4.onnx".into(),
+            url: "https://huggingface.co/CohereLabs/cohere-transcribe-03-2026-onnx/resolve/main/model_q4.onnx".into(),
+            size_bytes: 1_800_000_000,
+            kind: ModelKind::CohereOnnx,
         }
     }
 }
@@ -97,6 +133,15 @@ impl ModelManager {
     pub fn is_downloaded(&self, model: &ModelInfo) -> bool {
         let path = self.model_path(model);
         path.exists() && path.metadata().is_ok_and(|m| m.len() > 0)
+    }
+
+    /// Path for the tokenizer JSON co-located with the ONNX model.
+    pub fn tokenizer_path(&self, model: &ModelInfo) -> Option<std::path::PathBuf> {
+        match model.kind {
+            ModelKind::ParakeetOnnx => Some(self.models_dir.join("parakeet-tokenizer.json")),
+            ModelKind::CohereOnnx   => Some(self.models_dir.join("cohere-tokenizer.json")),
+            ModelKind::Whisper      => None,
+        }
     }
 
     /// Download a model with progress callback.
