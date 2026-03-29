@@ -397,15 +397,17 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
     // content that started before the user began speaking (acoustic bleed arrives
     // during or just after system audio plays, so 3s provides ample slack for
     // Whisper timestamp jitter at chunk boundaries).
-    const LOOK_BACK: f64 = 3.0;
+    const LOOK_BACK: f64 = 5.0;
     // How far after a Speaker 1 segment we still accept Speaker 2 content.
     // Kept small (1.0s) to enforce causality: Vapi responding after the user
     // finished speaking is not bleed, it's a reply.
     const LOOK_FORWARD: f64 = 1.0;
     const SIMILARITY_THRESHOLD: f64 = 0.55;
     // Segments with ≤ this many total words are never dropped — they're likely
-    // genuine short back-channel responses ("It's going well", "Through Google search").
-    const MIN_WORDS_TO_DEDUP: usize = 4;
+    // genuine single/two-word back-channel responses ("Nope.", "All good.").
+    // 3-4 word bleed fragments ("But honestly, I.", "Have a great day.") must
+    // go through the similarity check rather than being unconditionally kept.
+    const MIN_WORDS_TO_DEDUP: usize = 2;
 
     let has_remote = segments.iter().any(|s| s.speaker == "Speaker 2");
     if !has_remote {
@@ -597,15 +599,16 @@ mod tests {
         assert_eq!(result.len(), 2, "User response must be kept — outside LOOK_FORWARD window");
     }
 
-    // 3. Short user response (≤4 words) — never dropped regardless of overlap
+    // 3. Short user response (≤2 words) — never dropped regardless of overlap
     #[test]
     fn dedup_keeps_short_user_response() {
         let segments = vec![
-            seg("Speaker 2", 0.0, 5.0, "how is your day going its going well nice"),
-            seg("Speaker 1", 0.5, 2.0, "its going well"), // 3 words, overlapping
+            seg("Speaker 2", 0.0, 5.0, "nope all good how is your day going"),
+            // "Nope" is 1 word — MIN_WORDS_TO_DEDUP=2 unconditionally protects it
+            seg("Speaker 1", 0.5, 1.5, "Nope"),
         ];
         let result = deduplicate_bleed(segments);
-        assert_eq!(result.len(), 2, "Short response must be kept unconditionally");
+        assert_eq!(result.len(), 2, "1-word response must be kept unconditionally");
     }
 
     // 4. Vapi segment starts >1s after user ends — must NOT be in match union
