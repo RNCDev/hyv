@@ -96,6 +96,10 @@ pub async fn start_recording(
             let mut s = state.status.lock().await;
             match result {
                 Ok(_) => {
+                    // Download tokenizer.json for ONNX models (no-op for Whisper)
+                    if let Err(e) = model_mgr.ensure_tokenizer(&model, |_, _| {}).await {
+                        tracing::warn!("Tokenizer download failed (non-fatal for stub mode): {e}");
+                    }
                     *s = AppStatus::Idle;
                     emit_status(&app_clone, &s);
                     info!("Model downloaded, ready to record");

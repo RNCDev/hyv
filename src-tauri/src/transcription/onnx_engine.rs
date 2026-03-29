@@ -56,8 +56,6 @@ impl TranscriptionEngine for OnnxEngine {
         let mut all_segments = Vec::new();
 
         for (i, chunk) in chunks.iter().enumerate() {
-            progress(i, total);
-
             let mut session = self.session.lock()
                 .map_err(|e| format!("OnnxEngine session lock poisoned: {e}"))?;
 
@@ -85,9 +83,8 @@ impl TranscriptionEngine for OnnxEngine {
             };
 
             all_segments.extend(segs);
+            progress(i + 1, total);
         }
-
-        progress(total, total);
         Ok(all_segments)
     }
 }
