@@ -11,6 +11,8 @@ const MODEL_LABELS: Record<string, { label: string; note: string }> = {
   "large-v3-turbo": { label: "Large v3 Turbo", note: "1.6 GB · more accurate" },
   "distil-large-v3": { label: "Distil Large v3", note: "1.5 GB · best tradeoff" },
   "large-v3": { label: "Large v3", note: "3.1 GB · most accurate" },
+  "parakeet-tdt-0.6b": { label: "Parakeet TDT 0.6B", note: "2.4 GB · ONNX · best for mic" },
+  "cohere-transcribe": { label: "Cohere Transcribe", note: "1.8 GB · ONNX · experimental" },
 };
 
 interface Props {
