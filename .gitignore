@@ -18,3 +18,7 @@ src-tauri/models/
 
 # Git worktrees
 .worktrees/
+
+# docs subfolders — keep folder structure, ignore contents
+docs/superpowers/
+docs/test-fixtures/
