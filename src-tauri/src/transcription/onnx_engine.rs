@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use crate::transcription::{
     chunker::AudioChunk,
-    cohere, parakeet,
+    parakeet,
     engine::{TranscribedSegment, TranscriptionEngine},
     model_manager::ModelKind,
     onnx_runtime,
@@ -70,12 +70,7 @@ impl TranscriptionEngine for OnnxEngine {
                     )?
                 }
                 ModelKind::CohereOnnx => {
-                    cohere::transcribe(
-                        &mut session,
-                        &chunk.samples,
-                        speaker,
-                        chunk.offset_secs,
-                    )?
+                    return Err("OnnxEngine constructed with CohereOnnx kind — use CohereEngine (encoder+decoder)".into());
                 }
                 ModelKind::Whisper => {
                     return Err("OnnxEngine constructed with Whisper kind — use WhisperEngine".into());
