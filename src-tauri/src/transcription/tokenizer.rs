@@ -56,4 +56,31 @@ impl Tokenizer {
             .trim()
             .to_lowercase()
     }
+
+    /// Decode token IDs, filtering out any special tokens below `threshold`.
+    /// Used by CohereEngine to strip prompt and control tokens (IDs 0–13) from output.
+    pub fn decode_filtering_specials(&self, ids: &[u32], threshold: u32) -> String {
+        let filtered: Vec<u32> = ids.iter().copied().filter(|&id| id >= threshold).collect();
+        self.decode(&filtered)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_filtering_specials_removes_low_ids() {
+        // Build a minimal tokenizer with a known vocab
+        let vocab: std::collections::HashMap<u32, String> = [
+            (0u32, "<pad>".to_string()),
+            (3u32, "<eos>".to_string()),
+            (14u32, "hello".to_string()),
+            (15u32, "world".to_string()),
+        ].iter().cloned().collect();
+        let tok = Tokenizer { vocab };
+        // IDs 0 and 3 are specials (< 14), should be filtered out
+        let result = tok.decode_filtering_specials(&[0, 14, 3, 15], 14);
+        assert_eq!(result, "helloworld");
+    }
 }
