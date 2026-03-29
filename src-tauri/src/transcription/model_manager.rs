@@ -16,10 +16,8 @@ pub struct ModelInfo {
 impl ModelInfo {
     pub fn all() -> Vec<Self> {
         vec![
-            Self::medium(),
             Self::large_v3_turbo(),
-            Self::distil_large_v3(),
-            Self::large_v3(),
+            Self::medium(),
         ]
     }
 
