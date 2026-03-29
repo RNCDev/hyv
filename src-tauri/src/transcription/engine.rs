@@ -38,6 +38,7 @@ impl WhisperEngine {
     pub fn transcribe_chunk(
         &self,
         chunk: &AudioChunk,
+        use_beam_search: bool,
     ) -> Result<Vec<TranscribedSegment>, String> {
         info!(
             chunk = chunk.index + 1,
@@ -47,7 +48,11 @@ impl WhisperEngine {
             "Transcribing chunk"
         );
 
-        let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+        let mut params = FullParams::new(if use_beam_search {
+            SamplingStrategy::BeamSearch { beam_size: 5, patience: 1.0 }
+        } else {
+            SamplingStrategy::Greedy { best_of: 1 }
+        });
         params.set_language(Some("en"));
         params.set_n_threads(4);
         params.set_no_timestamps(false);
@@ -118,6 +123,7 @@ impl WhisperEngine {
         &self,
         chunks: &[AudioChunk],
         speaker: &str,
+        use_beam_search: bool,
         progress: F,
     ) -> Result<Vec<TranscribedSegment>, String>
     where
@@ -126,7 +132,7 @@ impl WhisperEngine {
         let mut all_segments = Vec::new();
 
         for (i, chunk) in chunks.iter().enumerate() {
-            let mut segments = self.transcribe_chunk(chunk)?;
+            let mut segments = self.transcribe_chunk(chunk, use_beam_search)?;
             for seg in &mut segments {
                 seg.speaker = speaker.to_string();
             }
@@ -135,5 +141,20 @@ impl WhisperEngine {
         }
 
         Ok(all_segments)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transcribe_chunk_accepts_beam_flag() {
+        use std::path::Path;
+        // Should fail with "Model file not found" — not a panic
+        let result = WhisperEngine::new(Path::new("/nonexistent/model.bin"));
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(err.contains("Model file not found"), "unexpected error: {err}");
     }
 }

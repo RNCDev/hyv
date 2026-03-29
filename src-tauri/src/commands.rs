@@ -266,6 +266,7 @@ fn process_recording(
             PROGRESS_MIC_START,
             PROGRESS_MIC_RANGE,
             &engine,
+            false, // use_beam_search: Greedy for noisy mic channel
             app,
         )?;
         all_segments.extend(mic_segments);
@@ -279,6 +280,7 @@ fn process_recording(
             PROGRESS_SYS_START,
             PROGRESS_SYS_RANGE,
             &engine,
+            true, // use_beam_search: Beam Search for clean system audio channel
             app,
         )?;
         all_segments.extend(sys_segments);
@@ -307,6 +309,7 @@ fn process_channel(
     progress_start: f64,
     progress_range: f64,
     engine: &WhisperEngine,
+    use_beam_search: bool,
     app: &AppHandle,
 ) -> Result<Vec<TranscribedSegment>, String> {
     let speech = vad::find_speech_segments(
@@ -329,7 +332,7 @@ fn process_channel(
         &format!("Transcribing {speaker} ({} chunks)...", chunks.len()),
     );
 
-    engine.transcribe_channel(&chunks, speaker, |done, total| {
+    engine.transcribe_channel(&chunks, speaker, use_beam_search, |done, total| {
         let pct = progress_start + (done as f64 / total as f64) * progress_range;
         update_progress(app, pct, &format!("Transcribing {speaker}: {done}/{total}"));
     })
