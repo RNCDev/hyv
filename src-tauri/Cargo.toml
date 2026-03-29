@@ -32,6 +32,9 @@ dirs = "6"
 chrono = "0.4"
 futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
+ort = { version = "=2.0.0-rc.10", features = ["load-dynamic"] }
+ndarray = "0.16"
+rustfft = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cidre = { git = "https://github.com/yury/cidre", rev = "a9587fa", features = ["av"] }
