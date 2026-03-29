@@ -414,15 +414,7 @@ fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegmen
         return segments;
     }
 
-    fn words(text: &str) -> Vec<String> {
-        text.chars()
-            .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-            .collect::<String>()
-            .to_lowercase()
-            .split_whitespace()
-            .map(String::from)
-            .collect()
-    }
+    use crate::text_util::normalize_words as words;
 
     // Pre-compute remote data: (start, end, word set)
     let remote_entries: Vec<(f64, f64, HashSet<String>)> = segments

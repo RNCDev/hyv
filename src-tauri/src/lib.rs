@@ -2,8 +2,8 @@ pub mod audio;
 pub mod commands;
 mod debug;
 pub mod output;
-mod platform;
 mod state;
+pub mod text_util;
 pub mod transcription;
 
 use state::AppState;

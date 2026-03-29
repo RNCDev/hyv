@@ -15,6 +15,7 @@ use hound::WavReader;
 use hyv_lib::{
     audio::aec,
     commands::{align_channels_pub, deduplicate_bleed_pub, run_channel_pipeline},
+    text_util::normalize_words,
     transcription::engine::WhisperEngine,
     transcription::model_manager::{ModelInfo, ModelManager},
     output::transcript_writer,
@@ -171,16 +172,6 @@ fn score_wer(
 
     let overall_wer = if total_gt == 0 { 0.0 } else { total_err as f64 / total_gt as f64 };
     eprintln!("WER overall: {:.1}% ({total_err} edits / {total_gt} ref words)", overall_wer * 100.0);
-}
-
-fn normalize_words(text: &str) -> Vec<String> {
-    text.chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
-        .collect::<String>()
-        .to_lowercase()
-        .split_whitespace()
-        .map(String::from)
-        .collect()
 }
 
 fn levenshtein(a: &[String], b: &[String]) -> usize {

@@ -79,13 +79,56 @@ Real-time per-segment output during recording instead of batch processing after 
 
 ---
 
+## New from Competitive Analysis (March 2028)
+
+### Stealth / Content-Protected Window
+**Source:** Project Raven
+
+Make the Hyv window invisible to screen sharing (Zoom, Meet, Teams). Prevents participants from seeing the transcription overlay.
+
+**Implementation:** Tauri 2 exposes `WebviewWindow::set_content_protected(true)` on macOS. Single API call — add a toggle in settings and call it on window creation.
+
+### Multi-Language Support
+**Source:** Minute (25+ languages)
+
+Whisper already supports 99 languages — this is mostly a UI/config change. Add a language selector dropdown, pass the selected language code to `whisper_rs` params instead of hardcoded `"en"`.
+
+**Implementation:** Add language setting to `AppState`, expose via a new Tauri command, pass to `FullParams::set_language()`. Default to `"en"` or auto-detect.
+
+### Structured Output (JSON Schema)
+**Source:** Minute
+
+After transcription, optionally pass segments through a local LLM (e.g., llama.cpp via `llm` crate) with a JSON schema prompt to produce `{ summary, action_items[], decisions[], speakers[] }`. Store alongside the `.txt` as a `.json` file.
+
+**Implementation:** Add optional post-processing step after `merge_segments()`. Bundle a small quantized model (e.g., Phi-3 mini) or let users point to their own. Aligns with local-first: no cloud required.
+
+### Speaker Profiles / Participant Memory
+**Source:** Minute
+
+Persist speaker embeddings across sessions in `~/Library/Application Support/Hyv/speakers/`. On subsequent meetings, match MFCC embeddings (cosine similarity ≥0.55) to auto-resolve "Speaker 1" → actual names. User confirms/corrects assignments, building profiles over time.
+
+**Implementation:** Builds on the Speaker Embedding work below. Add a `speakers.json` registry mapping embedding hashes to user-assigned names. Share the `ort` dependency with Neural VAD.
+
+### Calendar Integration
+**Source:** Hyprnote
+
+Read macOS Calendar via EventKit (available through `cidre`, already a dependency). Auto-name transcripts from upcoming meeting titles. Pre-populate vocabulary boost from meeting invite body.
+
+**Implementation:** Query `EKEventStore` for events in the next 30 minutes. Requires Calendar permission entitlement. Data stays entirely local.
+
+---
+
 ## Priority Recommendation
 
 Based on impact vs. effort:
 
 1. **Quantized models** — immediate processing speed improvement, trivial to implement
-2. **Neural VAD** — biggest accuracy improvement for speech detection, medium effort
-3. ~~**EBU R128 normalization**~~ — ✓ done
-4. **Speaker embeddings** — enables true multi-speaker support, high effort but high value
-5. ~~**WebRTC AEC3**~~ — ✓ done
-6. **Vocabulary boosting** — low effort, useful for domain-specific jargon
+2. **Stealth window** — single API call, high privacy value for meeting transcription
+3. **Neural VAD** — biggest accuracy improvement for speech detection, medium effort
+4. **Vocabulary boosting** — low effort, useful for domain-specific jargon
+5. **Multi-language support** — low effort, broad market impact
+6. **Speaker embeddings + profiles** — enables true multi-speaker support, high effort but highest value
+7. **Structured output** — requires bundling an LLM, high effort but differentiating
+8. **Calendar integration** — medium effort, nice UX polish
+9. ~~**EBU R128 normalization**~~ — ✓ done
+10. ~~**WebRTC AEC3**~~ — ✓ done

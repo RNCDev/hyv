@@ -11,7 +11,6 @@ pub struct ModelInfo {
     pub filename: String,
     pub url: String,
     pub size_bytes: u64,
-    pub sha256: Option<String>,
 }
 
 impl ModelInfo {
@@ -22,7 +21,6 @@ impl ModelInfo {
             url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin"
                 .to_string(),
             size_bytes: 1_533_774_781,
-            sha256: None,
         }
     }
 

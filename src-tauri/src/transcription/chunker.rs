@@ -43,9 +43,7 @@ pub fn chunk_speech(
             let chunk_samples_slice = &seg_audio[pos..end];
 
             // RMS gate: skip near-silent chunks to prevent Whisper hallucinations
-            let rms = (chunk_samples_slice.iter().map(|s| s * s).sum::<f32>()
-                / chunk_samples_slice.len() as f32)
-                .sqrt();
+            let rms = crate::audio::util::rms(chunk_samples_slice);
             if rms < MIN_CHUNK_RMS {
                 info!(
                     rms = format!("{:.5}", rms),

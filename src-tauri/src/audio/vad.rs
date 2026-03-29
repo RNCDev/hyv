@@ -40,7 +40,7 @@ pub fn find_speech_segments(
         let frame = &audio[frame_start..frame_end];
 
         // RMS energy
-        let energy: f32 = (frame.iter().map(|s| s * s).sum::<f32>() / frame.len() as f32).sqrt();
+        let energy: f32 = super::util::rms(frame);
 
         if energy > energy_threshold {
             if !in_speech {
