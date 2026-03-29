@@ -112,7 +112,7 @@ system_buffer
   → VAD → chunk → Whisper → Speaker 2 segments
 
 all_segments
-  → align_channels() — shift Speaker 1 timestamps if buffer offset >3s
+  → align_channels() — shift Speaker 1 timestamps if buffer offset >8s
   → deduplicate_bleed() — drop Speaker 1 segments that match Speaker 2 (>65% word overlap, 5s window, min 3 words)
   → transcript_writer::merge_segments() — merge same-speaker segments within 2s
   → ~/Desktop/Hyv_Transcript_YYYY-MM-DD_HH-MM.txt
@@ -178,8 +178,8 @@ Progress emits: 0% → 10% (mic VAD) → 10–50% (mic Whisper) → 50% → 55�
 
 ### align_channels()
 - Finds first Whisper segment timestamp for Speaker 1 and Speaker 2
-- If offset > 3s: shifts all Speaker 1 timestamps by `-offset`
-- Threshold is 3s (not 1s) — smaller offsets are conversational timing, not buffer misalignment
+- If offset > 8s: shifts all Speaker 1 timestamps by `-offset`
+- Threshold is 8s (not 1s) — smaller offsets are conversational timing, not buffer misalignment
 
 ### deduplicate_bleed()
 - Drops Speaker 1 segments that are echo of Speaker 2 (mic picked up system audio)
