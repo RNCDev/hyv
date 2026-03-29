@@ -33,6 +33,11 @@ dirs = "6"
 chrono = "0.4"
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
+clap = { version = "4", features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cidre = { git = "https://github.com/yury/cidre", rev = "a9587fa", features = ["av"] }
+
+[[bin]]
+name = "replay_pipeline"
+path = "src/bin/replay_pipeline.rs"

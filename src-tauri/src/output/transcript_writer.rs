@@ -1,8 +1,58 @@
 use crate::transcription::engine::TranscribedSegment;
 use chrono::Local;
-use std::io::Write;
 use std::path::PathBuf;
 use tracing::info;
+
+/// Build the transcript as a String (no file I/O).
+fn build_transcript_string(segments: &mut [TranscribedSegment], duration_secs: f64) -> String {
+    segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+    let merged = merge_segments(segments);
+
+    let speaker_count = merged
+        .iter()
+        .map(|s| s.speaker.as_str())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    let duration_str = format_duration(duration_secs);
+    let date_str = Local::now().format("%B %d, %Y at %-I:%M %p").to_string();
+
+    let mut out = String::new();
+    use std::fmt::Write as _;
+    writeln!(out, "=== Hyv Transcript ===").ok();
+    writeln!(out, "Date: {date_str}").ok();
+    writeln!(out, "Duration: {duration_str}").ok();
+    writeln!(out, "Speakers: {speaker_count}").ok();
+    writeln!(out, "========================").ok();
+    writeln!(out).ok();
+
+    for seg in &merged {
+        let text = seg.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let ts = format_timestamp(seg.start);
+        writeln!(out, "[{ts}] {}: {text}", seg.speaker).ok();
+    }
+
+    info!(
+        raw = segments.len(),
+        merged = merged.len(),
+        "Segments merged for output"
+    );
+
+    writeln!(out).ok();
+    writeln!(out, "=== End of Transcript ===").ok();
+    out
+}
+
+/// Format transcript as a String without writing to disk.
+pub fn format_transcript(
+    segments: &mut [TranscribedSegment],
+    duration_secs: f64,
+) -> Result<String, String> {
+    Ok(build_transcript_string(segments, duration_secs))
+}
 
 /// Write a transcript to the Desktop as a plain text file.
 pub fn write_transcript(
@@ -14,53 +64,11 @@ pub fn write_transcript(
     let filename = format!("Hyv_Transcript_{}.txt", now.format("%Y-%m-%d_%H-%M"));
     let path = desktop.join(&filename);
 
-    // Sort by start time
-    segments.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap());
+    let content = build_transcript_string(segments, duration_secs);
+    std::fs::write(&path, &content)
+        .map_err(|e| format!("Failed to create transcript: {e}"))?;
 
-    // Merge consecutive same-speaker segments within 2s gap
-    let merged = merge_segments(segments);
-
-    // Count unique speakers
-    let speaker_count = merged
-        .iter()
-        .map(|s| s.speaker.as_str())
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-
-    let mut file =
-        std::fs::File::create(&path).map_err(|e| format!("Failed to create transcript: {e}"))?;
-
-    // Header
-    let duration_str = format_duration(duration_secs);
-    let date_str = now.format("%B %d, %Y at %-I:%M %p").to_string();
-
-    writeln!(file, "=== Hyv Transcript ===").ok();
-    writeln!(file, "Date: {date_str}").ok();
-    writeln!(file, "Duration: {duration_str}").ok();
-    writeln!(file, "Speakers: {speaker_count}").ok();
-    writeln!(file, "========================").ok();
-    writeln!(file).ok();
-
-    // Segments
-    for seg in &merged {
-        let text = seg.text.trim();
-        if text.is_empty() {
-            continue;
-        }
-        let ts = format_timestamp(seg.start);
-        writeln!(file, "[{ts}] {}: {text}", seg.speaker).ok();
-    }
-
-    info!(
-        raw = segments.len(),
-        merged = merged.len(),
-        "Segments merged for output"
-    );
-
-    writeln!(file).ok();
-    writeln!(file, "=== End of Transcript ===").ok();
-
-    info!(path = %path.display(), segments = segments.len(), "Transcript written");
+    info!(path = %path.display(), "Transcript written");
     Ok(path)
 }
 

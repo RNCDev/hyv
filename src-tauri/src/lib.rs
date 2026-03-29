@@ -1,10 +1,10 @@
-mod audio;
-mod commands;
+pub mod audio;
+pub mod commands;
 mod debug;
-mod output;
+pub mod output;
 mod platform;
 mod state;
-mod transcription;
+pub mod transcription;
 
 use state::AppState;
 use tauri::Manager;

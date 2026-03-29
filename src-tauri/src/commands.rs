@@ -505,6 +505,18 @@ fn update_progress(app: &AppHandle, progress: f64, message: &str) {
     );
 }
 
+/// Public wrapper for use by the replay_pipeline binary.
+pub fn align_channels_pub(segments: &mut [TranscribedSegment]) {
+    align_channels(segments)
+}
+
+/// Public wrapper for use by the replay_pipeline binary.
+pub fn deduplicate_bleed_pub(
+    segments: Vec<TranscribedSegment>,
+) -> Vec<TranscribedSegment> {
+    deduplicate_bleed(segments)
+}
+
 fn emit_status(app: &AppHandle, status: &AppStatus) {
     let _ = app.emit(
         "status-changed",
