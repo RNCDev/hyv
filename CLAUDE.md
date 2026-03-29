@@ -184,7 +184,7 @@ Progress emits: 0% → 10% (mic VAD) → 10–50% (mic Whisper) → 50% → 55�
 ### deduplicate_bleed()
 - Drops Speaker 1 segments that are echo of Speaker 2 (mic picked up system audio)
 - Time window: 5s (bleed segments can drift after timestamp alignment)
-- Similarity: >65% word overlap (directional — matched words / Speaker 1 word count)
+- Similarity: >55% word overlap (directional — matched words / Speaker 1 word count)
 - Guard: segments ≤3 words are never dropped (brief genuine responses)
 
 ### merge_segments() (transcript_writer.rs)

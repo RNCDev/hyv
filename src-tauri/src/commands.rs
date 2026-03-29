@@ -378,8 +378,11 @@ fn align_channels(segments: &mut [TranscribedSegment]) {
 }
 
 fn deduplicate_bleed(segments: Vec<TranscribedSegment>) -> Vec<TranscribedSegment> {
-    // How far before a Speaker 1 segment we look for overlapping Speaker 2 content.
-    // Acoustic bleed arrives with <300ms delay but Whisper timestamp jitter needs slack.
+    // Backward extension from the Speaker 1 segment start — a remote segment
+    // qualifies if it ends after (seg.start - LOOK_BACK). This catches Speaker 2
+    // content that started before the user began speaking (acoustic bleed arrives
+    // during or just after system audio plays, so 3s provides ample slack for
+    // Whisper timestamp jitter at chunk boundaries).
     const LOOK_BACK: f64 = 3.0;
     // How far after a Speaker 1 segment we still accept Speaker 2 content.
     // Kept small (1.0s) to enforce causality: Vapi responding after the user
@@ -559,11 +562,13 @@ mod tests {
     fn dedup_keeps_user_response_after_vapi_turn() {
         let segments = vec![
             seg("Speaker 2", 0.0, 4.0, "Would you mind telling me how you found out about vapi"),
-            // User responds 5 seconds after Vapi finishes — outside LOOK_FORWARD window
-            seg("Speaker 1", 9.0, 11.0, "Through google search"),
+            // User responds 5 seconds after Vapi finishes — outside LOOK_FORWARD window (1.0s).
+            // Segment has 6 words so the MIN_WORDS_TO_DEDUP guard does NOT fire — this
+            // tests that the time window causality logic itself protects the segment.
+            seg("Speaker 1", 9.0, 11.0, "through a friend at intuit actually"),
         ];
         let result = deduplicate_bleed(segments);
-        assert_eq!(result.len(), 2, "User response must be kept");
+        assert_eq!(result.len(), 2, "User response must be kept — outside LOOK_FORWARD window");
     }
 
     // 3. Short user response (≤4 words) — never dropped regardless of overlap
